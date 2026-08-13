@@ -1,0 +1,6 @@
+{
+  "name": "Sistema de Inventario y Ventas",
+  "description": "Sistema profesional de control de inventario, existencias, ventas POS, alertas de stock y reportes comerciales",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
