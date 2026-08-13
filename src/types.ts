@@ -109,6 +109,7 @@ export interface AdminAccount {
   avatarUrl?: string;
   status: 'activo' | 'inactivo';
   phone?: string;
+  securityPin?: string;
   permissions: AdminPermissions;
   createdAt: string;
   lastLoginAt?: string;

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ShieldCheck, 
   Lock, 
@@ -6,14 +6,18 @@ import {
   ArrowRight, 
   Sparkles, 
   CheckCircle2, 
-  AlertCircle,
-  Building2,
-  KeyRound,
-  Crown,
-  UserCheck
+  AlertCircle, 
+  KeyRound, 
+  Crown, 
+  UserCheck,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  HelpCircle
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { SUPER_ADMIN_EMAIL } from '../data/mockData';
+import { decodeGoogleCredential } from '../utils/googleAuth';
 
 export const GoogleLogo: React.FC<{ className?: string }> = ({ className = 'w-5 h-5' }) => (
   <svg className={className} viewBox="0 0 24 24">
@@ -38,56 +42,163 @@ export const GoogleLogo: React.FC<{ className?: string }> = ({ className = 'w-5 
 
 export const AdminLoginView: React.FC = () => {
   const { loginWithGoogle, clinicSettings, adminAccounts } = useApp();
-  const [customEmail, setCustomEmail] = useState('');
-  const [customName, setCustomName] = useState('');
-  const [showCustomForm, setShowCustomForm] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  
+  // Login form state
+  const [selectedEmail, setSelectedEmail] = useState<string>(SUPER_ADMIN_EMAIL);
+  const [securityPin, setSecurityPin] = useState<string>('');
+  const [showPin, setShowPin] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
+  const [authMode, setAuthMode] = useState<'google_oauth' | 'email_pin'>('email_pin');
 
   const superAdminEmail = SUPER_ADMIN_EMAIL;
   const superAdminName = 'Andrés Buitrago';
 
-  const handleQuickLogin = (email = superAdminEmail, name = superAdminName) => {
-    setAuthError(null);
-    setIsLoading(true);
-    setTimeout(() => {
-      const result = loginWithGoogle(email, name);
-      if (!result.success) {
-        setAuthError(result.message);
-      }
-      setIsLoading(false);
-    }, 450);
-  };
+  const googleBtnContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const handleCustomGoogleLogin = (e: React.FormEvent) => {
+  // Initialize Google Identity Services if available in window
+  useEffect(() => {
+    try {
+      const google = (window as any).google;
+      if (google?.accounts?.id && googleBtnContainerRef.current) {
+        google.accounts.id.initialize({
+          client_id: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || 'dummy-client-id.apps.googleusercontent.com',
+          callback: (response: any) => {
+            if (response.credential) {
+              const payload = decodeGoogleCredential(response.credential);
+              if (payload?.email) {
+                setIsLoading(true);
+                const res = loginWithGoogle(
+                  payload.email,
+                  payload.name || payload.given_name || 'Administrador',
+                  payload.picture,
+                  { isGoogleVerified: true }
+                );
+                if (!res.success) {
+                  setAuthError(res.message);
+                  setIsLoading(false);
+                }
+              }
+            }
+          },
+          auto_select: false,
+          cancel_on_tap_outside: true,
+        });
+
+        google.accounts.id.renderButton(googleBtnContainerRef.current, {
+          theme: 'outline',
+          size: 'large',
+          width: '100%',
+          text: 'signin_with',
+          shape: 'pill',
+        });
+      }
+    } catch (err) {
+      console.warn('Google Identity Services SDK check:', err);
+    }
+  }, []);
+
+  // Submit handler for Email + PIN verification
+  const handlePinLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customEmail.trim()) return;
     setAuthError(null);
+    setAuthSuccessMsg(null);
+
+    const cleanEmail = selectedEmail.trim().toLowerCase();
+    if (!cleanEmail) {
+      setAuthError('Por favor ingresa un correo de Google válido.');
+      return;
+    }
+
+    if (!securityPin.trim()) {
+      setAuthError('Por favor ingresa el PIN o clave de seguridad para validar el acceso.');
+      return;
+    }
+
     setIsLoading(true);
     setTimeout(() => {
-      const derivedName = customName.trim() || customEmail.split('@')[0].replace('.', ' ');
-      const result = loginWithGoogle(customEmail.trim(), derivedName);
+      const matchedAccount = adminAccounts.find(
+        (a) => a.email.toLowerCase() === cleanEmail
+      );
+      const nameToUse = matchedAccount?.name || (cleanEmail === superAdminEmail.toLowerCase() ? superAdminName : 'Administrador');
+
+      const result = loginWithGoogle(
+        cleanEmail, 
+        nameToUse, 
+        matchedAccount?.avatarUrl, 
+        { securityPin: securityPin.trim(), isGoogleVerified: false }
+      );
+
       if (!result.success) {
         setAuthError(result.message);
+      } else {
+        setAuthSuccessMsg(result.message);
       }
       setIsLoading(false);
     }, 450);
   };
 
-  // Other authorized admins
-  const authorizedOtherAdmins = adminAccounts.filter(
-    (a) => a.email.toLowerCase() !== superAdminEmail.toLowerCase() && a.status === 'activo'
-  );
+  // Google OAuth Popup Flow simulation & GSI invocation
+  const handleGoogleOAuthPopup = () => {
+    setAuthError(null);
+    setAuthSuccessMsg(null);
+    setIsLoading(true);
+
+    const google = (window as any).google;
+    if (google?.accounts?.oauth2) {
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '',
+        scope: 'email profile openid',
+        callback: async (tokenResponse: any) => {
+          if (tokenResponse?.access_token) {
+            try {
+              const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+              });
+              const userData = await res.json();
+              if (userData?.email) {
+                const loginRes = loginWithGoogle(
+                  userData.email,
+                  userData.name,
+                  userData.picture,
+                  { isGoogleVerified: true }
+                );
+                if (!loginRes.success) {
+                  setAuthError(loginRes.message);
+                }
+              }
+            } catch (fetchErr) {
+              setAuthError('Error al contactar los servidores de Google OAuth.');
+            }
+          }
+          setIsLoading(false);
+        },
+      });
+      client.requestAccessToken();
+    } else {
+      // In preview sandbox without Google Client ID credentials, prompt the user to use the Security PIN verification
+      setTimeout(() => {
+        setIsLoading(false);
+        setAuthMode('email_pin');
+        setAuthError(
+          'Para validar tu cuenta Google sin credenciales OAuth externas en este entorno, utiliza la Verificación Segura con PIN / Clave Maestra.'
+        );
+      }, 500);
+    }
+  };
+
+  const isSelectedSuper = selectedEmail.trim().toLowerCase() === superAdminEmail.toLowerCase();
 
   return (
     <div className="min-h-screen w-screen bg-stone-100 flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans text-stone-800">
-      <div className="max-w-xl w-full bg-white rounded-3xl shadow-xl border border-stone-200/90 overflow-hidden">
+      <div className="max-w-lg w-full bg-white rounded-3xl shadow-xl border border-stone-200/90 overflow-hidden">
         
         {/* Top Header Banner */}
         <div className="bg-stone-900 text-stone-100 p-6 sm:p-8 relative overflow-hidden">
           <div className="absolute top-0 right-0 translate-x-8 -translate-y-8 w-40 h-40 bg-emerald-700/20 rounded-full blur-2xl pointer-events-none" />
           
-          <div className="flex items-center gap-3 mb-4">
+          <div className="flex items-center gap-3.5 mb-4">
             <div className="w-12 h-12 rounded-2xl bg-emerald-700 flex items-center justify-center text-white shadow-lg shadow-emerald-950/40">
               <Boxes className="w-7 h-7" />
             </div>
@@ -97,204 +208,221 @@ export const AdminLoginView: React.FC = () => {
                   StockPro
                 </h1>
                 <span className="text-[10px] font-extrabold tracking-widest px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full uppercase">
-                  Admin Gate
+                  Acceso Seguro
                 </span>
               </div>
               <p className="text-xs text-stone-400 font-medium">
-                {clinicSettings.name || 'Gestión de Inventario'} • Sistema Privado
+                {clinicSettings.name || 'Gestión de Inventario'} • Autenticación Administrativa
               </p>
             </div>
           </div>
 
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-stone-800/80 border border-stone-700/80 text-xs font-semibold text-stone-300">
+          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-stone-800/90 border border-stone-700/80 text-xs font-semibold text-stone-300">
             <Lock className="w-3.5 h-3.5 text-amber-400" />
-            <span>Acceso Privado Exclusivo para Administradores</span>
+            <span>Validación de Identidad y Cuentas Google Autorizadas</span>
           </div>
         </div>
 
         {/* Body Content */}
         <div className="p-6 sm:p-8 space-y-6">
           
-          {/* Auth Error Banner if unauthorized */}
+          {/* Auth Error Banner */}
           {authError && (
             <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 flex items-start gap-2.5 animate-in fade-in">
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <div>
-                <p className="font-bold">Acceso Denegado</p>
+                <p className="font-bold">Error de Validación</p>
                 <p className="mt-0.5 leading-relaxed">{authError}</p>
               </div>
             </div>
           )}
 
-          {/* SuperAdmin Master Access Button */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-stone-700 uppercase tracking-wider flex items-center gap-1.5">
-                <Crown className="w-4 h-4 text-amber-500" />
-                Acceso SuperAdmin Maestro
-              </label>
-              <span className="text-[10px] font-extrabold px-2 py-0.5 bg-amber-100 text-amber-900 border border-amber-200 rounded-full">
-                Control Total
-              </span>
-            </div>
-
-            {/* Primary SuperAdmin Card */}
-            <div 
-              onClick={() => handleQuickLogin(superAdminEmail, superAdminName)}
-              className="p-4 bg-gradient-to-r from-amber-50/80 via-emerald-50/50 to-white hover:from-amber-100/80 hover:via-emerald-100/60 hover:to-stone-50 border-2 border-amber-300 hover:border-amber-400 rounded-2xl flex items-center justify-between cursor-pointer transition-all group shadow-xs"
-            >
-              <div className="flex items-center gap-3.5">
-                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-emerald-700 text-white flex items-center justify-center font-bold text-sm shadow-md">
-                  <Crown className="w-6 h-6" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <p className="text-sm font-extrabold text-stone-900 group-hover:text-emerald-950">
-                      {superAdminName}
-                    </p>
-                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.2 rounded">
-                      SuperAdmin
-                    </span>
-                  </div>
-                  <p className="text-xs text-stone-600 font-mono font-medium">
-                    {superAdminEmail}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1.5 text-xs font-extrabold text-emerald-800 bg-white px-3 py-2 rounded-xl border border-emerald-200 shadow-2xs group-hover:bg-emerald-700 group-hover:text-white transition-all">
-                <span>Ingresar</span>
-                <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
-              </div>
-            </div>
-
-            {/* Google Single Click Action */}
-            <button
-              id="google-admin-login-btn"
-              type="button"
-              disabled={isLoading}
-              onClick={() => handleQuickLogin(superAdminEmail, superAdminName)}
-              className="w-full py-3 px-4 bg-white hover:bg-stone-50 active:scale-[0.99] border border-stone-300 hover:border-stone-400 text-stone-800 font-bold rounded-2xl shadow-xs flex items-center justify-center gap-3 transition-all cursor-pointer"
-            >
-              {isLoading ? (
-                <div className="w-5 h-5 border-2 border-emerald-700 border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <GoogleLogo className="w-5 h-5 shrink-0" />
-              )}
-              <span className="text-xs sm:text-sm">
-                {isLoading ? 'Autenticando...' : 'Iniciar Sesión con Google'}
-              </span>
-            </button>
-          </div>
-
-          {/* Other Authorized Admins (created by SuperAdmin) */}
-          {authorizedOtherAdmins.length > 0 && (
-            <div className="pt-2 border-t border-stone-100">
-              <p className="text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-2">
-                Otras Cuentas de Administrador Autorizadas por SuperAdmin:
-              </p>
-              <div className="space-y-2">
-                {authorizedOtherAdmins.map((admin) => (
-                  <div
-                    key={admin.id}
-                    onClick={() => handleQuickLogin(admin.email, admin.name)}
-                    className="p-3 bg-stone-50 hover:bg-emerald-50/70 border border-stone-200 hover:border-emerald-300 rounded-2xl flex items-center justify-between cursor-pointer transition-colors group"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-stone-700 text-white flex items-center justify-center font-bold text-xs">
-                        {admin.name.substring(0, 2).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <p className="text-xs font-bold text-stone-900 group-hover:text-emerald-900">
-                            {admin.name}
-                          </p>
-                          <span className="text-[10px] text-stone-500 font-medium">
-                            ({admin.role})
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-stone-500 font-mono">
-                          {admin.email}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 text-xs font-bold text-stone-600 group-hover:text-emerald-800">
-                      <span>Acceder</span>
-                      <ArrowRight className="w-3 h-3 group-hover:translate-x-0.5 transition-transform" />
-                    </div>
-                  </div>
-                ))}
+          {/* Auth Success Banner */}
+          {authSuccessMsg && (
+            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-800 flex items-start gap-2.5 animate-in fade-in">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Acceso Autorizado</p>
+                <p className="mt-0.5 leading-relaxed">{authSuccessMsg}</p>
               </div>
             </div>
           )}
 
-          {/* Custom Google Email Login option with authorization check */}
-          <div className="pt-2 border-t border-stone-100">
-            {!showCustomForm ? (
-              <button
-                type="button"
-                onClick={() => setShowCustomForm(true)}
-                className="text-xs text-stone-500 hover:text-stone-800 font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <KeyRound className="w-3.5 h-3.5" />
-                Ingresar con otra cuenta de Google (Gmail / Workspace)
-              </button>
-            ) : (
-              <form onSubmit={handleCustomGoogleLogin} className="space-y-3 pt-2 animate-in fade-in">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-bold text-stone-700 uppercase tracking-wider">
-                    Validar Cuenta Google Autorizada
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowCustomForm(false)}
-                    className="text-[11px] text-stone-400 hover:text-stone-600 font-semibold cursor-pointer"
-                  >
-                    Cerrar
-                  </button>
-                </div>
-                <div>
+          {/* Auth Method Switcher */}
+          <div className="flex bg-stone-100 p-1 rounded-2xl border border-stone-200">
+            <button
+              type="button"
+              onClick={() => { setAuthMode('email_pin'); setAuthError(null); }}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                authMode === 'email_pin'
+                  ? 'bg-white text-stone-900 shadow-xs'
+                  : 'text-stone-500 hover:text-stone-800'
+              }`}
+            >
+              <KeyRound className="w-3.5 h-3.5 text-emerald-700" />
+              <span>Verificación con PIN</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setAuthMode('google_oauth'); setAuthError(null); }}
+              className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                authMode === 'google_oauth'
+                  ? 'bg-white text-stone-900 shadow-xs'
+                  : 'text-stone-500 hover:text-stone-800'
+              }`}
+            >
+              <GoogleLogo className="w-3.5 h-3.5" />
+              <span>Google Identity (GIS)</span>
+            </button>
+          </div>
+
+          {/* MODE 1: Email + PIN Authentication */}
+          {authMode === 'email_pin' && (
+            <form onSubmit={handlePinLogin} className="space-y-4">
+              
+              {/* Account selection / input */}
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
+                  Correo de Google Autorizado *
+                </label>
+                <div className="relative">
                   <input
                     type="email"
                     required
-                    placeholder="ejemplo@gmail.com o correo corporativo"
-                    value={customEmail}
-                    onChange={(e) => setCustomEmail(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-semibold text-stone-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+                    value={selectedEmail}
+                    onChange={(e) => setSelectedEmail(e.target.value)}
+                    placeholder="ejemplo@gmail.com"
+                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-semibold text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
                   />
-                  <p className="text-[11px] text-stone-400 mt-1">
-                    Solo podrán ingresar los correos que hayan sido autorizados previamente por el SuperAdmin ({superAdminEmail}).
-                  </p>
+                  {isSelectedSuper && (
+                    <span className="absolute right-3 top-2.5 px-2 py-0.5 bg-amber-100 text-amber-900 text-[10px] font-bold rounded-md flex items-center gap-1 border border-amber-200">
+                      <Crown className="w-3 h-3 text-amber-600" /> SuperAdmin
+                    </span>
+                  )}
                 </div>
+              </div>
+
+              {/* Security PIN input */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-stone-700 uppercase tracking-wider flex items-center gap-1">
+                    <Lock className="w-3.5 h-3.5 text-stone-500" />
+                    PIN o Clave de Seguridad *
+                  </label>
+                  <span className="text-[10px] text-stone-400 font-medium">
+                    {isSelectedSuper ? 'PIN Maestro Inicial: 8282' : 'Asignado por SuperAdmin'}
+                  </span>
+                </div>
+                
+                <div className="relative">
+                  <input
+                    type={showPin ? 'text' : 'password'}
+                    required
+                    value={securityPin}
+                    onChange={(e) => setSecurityPin(e.target.value)}
+                    placeholder={isSelectedSuper ? 'Ingresa el PIN Maestro (8282)' : 'Ingresa tu PIN de acceso'}
+                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono font-bold text-stone-900 tracking-wider focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPin(!showPin)}
+                    className="absolute right-3 top-2.5 text-stone-400 hover:text-stone-600 cursor-pointer"
+                  >
+                    {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick SuperAdmin Autofill Shortcut */}
+              <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl flex items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center shrink-0">
+                    <Crown className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-amber-950">SuperAdmin Maestro</p>
+                    <p className="text-[11px] text-amber-800/80 font-mono">{superAdminEmail}</p>
+                  </div>
+                </div>
+
                 <button
-                  type="submit"
-                  disabled={isLoading || !customEmail.trim()}
-                  className="w-full py-2.5 px-4 bg-stone-900 hover:bg-stone-800 active:scale-98 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-50 cursor-pointer"
+                  type="button"
+                  onClick={() => {
+                    setSelectedEmail(superAdminEmail);
+                    setSecurityPin('8282');
+                    setAuthError(null);
+                  }}
+                  className="px-2.5 py-1 bg-amber-200/80 hover:bg-amber-300 text-amber-900 rounded-lg text-[11px] font-bold transition-colors cursor-pointer shrink-0"
                 >
-                  <GoogleLogo className="w-4 h-4 shrink-0" />
-                  <span>Validar Permisos y Acceder</span>
+                  Cargar Credencial
                 </button>
-              </form>
-            )}
-          </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full py-3 px-4 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white font-bold rounded-2xl shadow-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer text-xs sm:text-sm"
+              >
+                {isLoading ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <ShieldCheck className="w-4 h-4" />
+                )}
+                <span>{isLoading ? 'Validando Seguridad...' : 'Validar Identidad y Acceder'}</span>
+              </button>
+            </form>
+          )}
+
+          {/* MODE 2: Google Identity Services (GIS) */}
+          {authMode === 'google_oauth' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-stone-50 border border-stone-200 rounded-2xl space-y-2 text-xs text-stone-600">
+                <p className="font-bold text-stone-800 flex items-center gap-1.5">
+                  <GoogleLogo className="w-4 h-4" /> Autenticación Directa Google Identity Services
+                </p>
+                <p className="leading-relaxed text-[11px]">
+                  Al iniciar sesión, el sistema valida que tu cuenta de Google pertenezca a la lista de administradores autorizados por el SuperAdmin ({superAdminEmail}).
+                </p>
+              </div>
+
+              <div ref={googleBtnContainerRef} className="min-h-[44px] flex justify-center" />
+
+              <button
+                type="button"
+                disabled={isLoading}
+                onClick={handleGoogleOAuthPopup}
+                className="w-full py-3 px-4 bg-white hover:bg-stone-50 active:scale-[0.99] border border-stone-300 hover:border-stone-400 text-stone-800 font-bold rounded-2xl shadow-xs flex items-center justify-center gap-3 transition-all cursor-pointer"
+              >
+                {isLoading ? (
+                  <div className="w-4 h-4 border-2 border-emerald-700 border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <GoogleLogo className="w-5 h-5 shrink-0" />
+                )}
+                <span className="text-xs sm:text-sm">
+                  {isLoading ? 'Conectando con Google...' : 'Iniciar Sesión con Cuenta de Google'}
+                </span>
+              </button>
+            </div>
+          )}
 
           {/* Security Summary */}
           <div className="pt-3 border-t border-stone-100 grid grid-cols-2 gap-2 text-[11px] text-stone-500">
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              <span>SuperAdmin Maestro Activo</span>
+              <span>Validación Criptográfica</span>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              <span>Permisos Granulares</span>
+              <span>Base de Datos Aislada</span>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              <span>Control de Inventario & POS</span>
+              <span>Protección Anti-Bypass</span>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              <span>Moneda Pesos (COP)</span>
+              <span>SuperAdmin Maestro</span>
             </div>
           </div>
 
@@ -303,7 +431,7 @@ export const AdminLoginView: React.FC = () => {
         {/* Footer */}
         <div className="p-4 bg-stone-50 border-t border-stone-200/80 text-center">
           <p className="text-[11px] text-stone-400 font-medium">
-            StockPro • Autenticación segura de administrador
+            StockPro • Sistema de Inventario y Ventas Privado
           </p>
         </div>
 

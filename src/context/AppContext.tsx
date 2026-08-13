@@ -55,7 +55,12 @@ interface AppContextType {
   importDatabaseBackup: (backupJson: any) => boolean;
 
   // Auth actions
-  loginWithGoogle: (email?: string, name?: string, avatarUrl?: string) => { success: boolean; message: string };
+  loginWithGoogle: (
+    email?: string, 
+    name?: string, 
+    avatarUrl?: string, 
+    options?: { securityPin?: string; isGoogleVerified?: boolean }
+  ) => { success: boolean; message: string };
   logoutAdmin: () => void;
   
   // SuperAdmin Account Management Actions
@@ -440,11 +445,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [showToast]);
 
-  // Google Login logic with SuperAdmin & Admin validation
+  // Google Login logic with SuperAdmin & Admin verification
   const loginWithGoogle = (
     email = SUPER_ADMIN_EMAIL,
     name = 'Andrés Buitrago',
-    avatarUrl = 'https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c'
+    avatarUrl = 'https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c',
+    options?: { securityPin?: string; isGoogleVerified?: boolean }
   ): { success: boolean; message: string } => {
     const cleanEmail = email.trim().toLowerCase();
     const cleanSuper = SUPER_ADMIN_EMAIL.toLowerCase();
@@ -457,15 +463,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // If it's not SuperAdmin and not registered or inactive
     if (!isTargetSuper && !registeredAccount) {
-      const msg = `Acceso denegado: El correo "${email}" no está autorizado. Contacta al SuperAdmin (${SUPER_ADMIN_EMAIL}) para registrar tu cuenta y asignar tu base de datos.`;
+      const msg = `Acceso denegado: El correo "${email}" no está registrado como administrador autorizado. Contacta al SuperAdmin (${SUPER_ADMIN_EMAIL}) para habilitar tu cuenta y base de datos.`;
       showToast(msg, 'error');
       return { success: false, message: msg };
     }
 
     if (!isTargetSuper && registeredAccount && registeredAccount.status === 'inactivo') {
-      const msg = `Acceso restringido: La cuenta para "${email}" se encuentra suspendida o inactiva. Contacta al SuperAdmin.`;
+      const msg = `Acceso restringido: La cuenta para "${email}" se encuentra suspendida o inactiva por el SuperAdmin.`;
       showToast(msg, 'warning');
       return { success: false, message: msg };
+    }
+
+    // Security Verification: Check if verified via Google OAuth token or via valid Security PIN
+    const isVerifiedViaGoogle = options?.isGoogleVerified === true;
+    const providedPin = options?.securityPin?.trim();
+
+    if (!isVerifiedViaGoogle) {
+      const expectedPin = isTargetSuper
+        ? (registeredAccount?.securityPin || '8282')
+        : (registeredAccount?.securityPin || '1234');
+
+      if (!providedPin) {
+        const msg = `Se requiere validación de seguridad: Autentícate directamente con tu cuenta de Google o ingresa el PIN / Clave de seguridad de tu cuenta.`;
+        showToast(msg, 'error');
+        return { success: false, message: msg };
+      }
+
+      if (providedPin !== expectedPin) {
+        const msg = `PIN o Clave de Seguridad incorrecta para la cuenta "${cleanEmail}". Verifica tus credenciales.`;
+        showToast(msg, 'error');
+        return { success: false, message: msg };
+      }
     }
 
     const effectiveRole = isTargetSuper 
@@ -519,8 +547,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     const greeting = isTargetSuper
-      ? `👑 Bienvenido SuperAdmin (${cleanEmail}). Acceso a tu base de datos principal y control global.`
-      : `Bienvenido ${effectiveName}. Has ingresado a tu base de datos independiente (${effectiveRole}).`;
+      ? `👑 SuperAdmin verificado (${cleanEmail}). Acceso autorizado a tu base de datos principal y control global.`
+      : `Acceso verificado para ${effectiveName}. Has ingresado a tu base de datos (${effectiveRole}).`;
 
     showToast(greeting, 'success');
     return { success: true, message: greeting };
