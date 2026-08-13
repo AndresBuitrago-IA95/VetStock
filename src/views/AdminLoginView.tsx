@@ -311,7 +311,7 @@ export const AdminLoginView: React.FC = () => {
                     PIN o Clave de Seguridad *
                   </label>
                   <span className="text-[10px] text-stone-400 font-medium">
-                    {isSelectedSuper ? 'PIN Maestro Inicial: 8282' : 'Asignado por SuperAdmin'}
+                    Asignado por el SuperAdmin
                   </span>
                 </div>
                 
@@ -321,7 +321,8 @@ export const AdminLoginView: React.FC = () => {
                     required
                     value={securityPin}
                     onChange={(e) => setSecurityPin(e.target.value)}
-                    placeholder={isSelectedSuper ? 'Ingresa el PIN Maestro (8282)' : 'Ingresa tu PIN de acceso'}
+                    placeholder="Ingresa tu PIN de acceso"
+                    autoComplete="off"
                     className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono font-bold text-stone-900 tracking-wider focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
                   />
                   <button
@@ -334,9 +335,8 @@ export const AdminLoginView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Quick SuperAdmin Autofill Shortcut */}
-              <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl flex items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2">
+              {isSelectedSuper && (
+                <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl flex items-center gap-2 text-xs">
                   <div className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center shrink-0">
                     <Crown className="w-4 h-4" />
                   </div>
@@ -345,19 +345,7 @@ export const AdminLoginView: React.FC = () => {
                     <p className="text-[11px] text-amber-800/80 font-mono">{superAdminEmail}</p>
                   </div>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedEmail(superAdminEmail);
-                    setSecurityPin('8282');
-                    setAuthError(null);
-                  }}
-                  className="px-2.5 py-1 bg-amber-200/80 hover:bg-amber-300 text-amber-900 rounded-lg text-[11px] font-bold transition-colors cursor-pointer shrink-0"
-                >
-                  Cargar Credencial
-                </button>
-              </div>
+              )}
 
               <button
                 type="submit"

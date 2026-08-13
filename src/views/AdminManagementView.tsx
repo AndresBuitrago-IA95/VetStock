@@ -17,12 +17,19 @@ import {
   Phone, 
   Database,
   ExternalLink,
-  Sparkles
+  Sparkles,
+  RefreshCw,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AdminAccount, AdminRole, AdminPermissions } from '../types';
 import { SUPER_ADMIN_EMAIL } from '../data/mockData';
 import { formatDate, formatCOP } from '../utils/formatters';
+
+// Generates a random 6-digit PIN so a new/edited account is never left
+// without one (an unset PIN used to silently accept a guessable default).
+const generateRandomPin = (): string => String(Math.floor(100000 + Math.random() * 900000));
 
 export const AdminManagementView: React.FC = () => {
   const { 
@@ -51,6 +58,8 @@ export const AdminManagementView: React.FC = () => {
   const [formPhone, setFormPhone] = useState('');
   const [formRole, setFormRole] = useState<AdminRole>('Administrador');
   const [formNotes, setFormNotes] = useState('');
+  const [formSecurityPin, setFormSecurityPin] = useState('');
+  const [showFormPin, setShowFormPin] = useState(false);
   const [formPermissions, setFormPermissions] = useState<AdminPermissions>({
     canManageAdmins: false,
     canEditInventory: true,
@@ -67,6 +76,9 @@ export const AdminManagementView: React.FC = () => {
     setFormPhone('');
     setFormRole('Administrador');
     setFormNotes('');
+    // Auto-generate a real PIN up front so no account is ever created blank.
+    setFormSecurityPin(generateRandomPin());
+    setShowFormPin(true);
     setFormPermissions({
       canManageAdmins: false,
       canEditInventory: true,
@@ -85,6 +97,8 @@ export const AdminManagementView: React.FC = () => {
     setFormPhone(admin.phone || '');
     setFormRole(admin.role);
     setFormNotes(admin.notes || '');
+    setFormSecurityPin(admin.securityPin || '');
+    setShowFormPin(false);
     setFormPermissions(admin.permissions || {
       canManageAdmins: admin.role === 'SuperAdmin',
       canEditInventory: true,
@@ -149,6 +163,7 @@ export const AdminManagementView: React.FC = () => {
   const handleSaveAdmin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formEmail.trim() || !formName.trim()) return;
+    if (!formSecurityPin.trim()) return;
 
     if (editingAdmin) {
       updateAdminAccount(editingAdmin.id, {
@@ -158,6 +173,7 @@ export const AdminManagementView: React.FC = () => {
         role: formRole,
         notes: formNotes.trim() || undefined,
         permissions: formPermissions,
+        securityPin: formSecurityPin.trim(),
       });
     } else {
       addAdminAccount({
@@ -168,6 +184,7 @@ export const AdminManagementView: React.FC = () => {
         status: 'activo',
         notes: formNotes.trim() || undefined,
         permissions: formPermissions,
+        securityPin: formSecurityPin.trim(),
         avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(formName)}&background=047857&color=fff`,
       });
     }
@@ -625,6 +642,43 @@ export const AdminManagementView: React.FC = () => {
                     <span>Eliminar Productos</span>
                   </label>
                 </div>
+              </div>
+
+              <div className="pt-3 border-t border-stone-100">
+                <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
+                  PIN / Clave de Seguridad *
+                </label>
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={showFormPin ? 'text' : 'password'}
+                      required
+                      value={formSecurityPin}
+                      onChange={(e) => setFormSecurityPin(e.target.value)}
+                      placeholder="PIN de acceso para esta cuenta"
+                      autoComplete="off"
+                      className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono font-bold tracking-wider focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowFormPin(!showFormPin)}
+                      className="absolute right-3 top-2.5 text-stone-400 hover:text-stone-600 cursor-pointer"
+                    >
+                      {showFormPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setFormSecurityPin(generateRandomPin()); setShowFormPin(true); }}
+                    className="p-2.5 bg-stone-100 hover:bg-emerald-100 text-stone-600 hover:text-emerald-800 rounded-xl transition-colors cursor-pointer shrink-0"
+                    title="Generar un nuevo PIN aleatorio"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                  </button>
+                </div>
+                <p className="text-[11px] text-stone-500 mt-1">
+                  Comparte este PIN de forma segura con la persona; lo necesitará junto a su correo para iniciar sesión.
+                </p>
               </div>
 
               <div>

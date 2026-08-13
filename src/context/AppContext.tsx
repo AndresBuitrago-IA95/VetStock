@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Product, 
   StockMovement, 
@@ -115,6 +115,12 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const getTenantStorageKey = (adminEmail: string, key: 'products' | 'movements' | 'sales' | 'settings' | 'user') => {
   const clean = (adminEmail || SUPER_ADMIN_EMAIL).toLowerCase().trim().replace(/[^a-z0-9]/g, '_');
   return `stockpro_tenant_${clean}_${key}`;
+};
+
+// Generates a random 6-digit security PIN for new admin accounts, so no
+// account is ever left with a blank/guessable default PIN.
+const generateSecurityPin = (): string => {
+  return String(Math.floor(100000 + Math.random() * 900000));
 };
 
 const GLOBAL_STORAGE_KEYS = {
@@ -270,6 +276,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [clinicSettings, setClinicSettings] = useState<ClinicSettings>(() => loadTenantSettings(activeTenantEmail));
   const [userProfile, setUserProfile] = useState<UserProfile>(() => loadTenantUser(activeTenantEmail));
 
+  // Tracks whether `products`/`sales`/etc in memory still belong to the
+  // PREVIOUS tenant, right in the middle of a switch. Without this guard,
+  // the persist effects below (which also depend on activeTenantEmail)
+  // could fire on the same commit as the tenant switch - before the reload
+  // effect's setState calls have actually landed - and briefly write the
+  // outgoing tenant's data into the incoming tenant's storage key,
+  // corrupting or mixing the two caches.
+  const prevActiveTenantRef = useRef(activeTenantEmail);
+  const tenantSwitchedThisRender = prevActiveTenantRef.current !== activeTenantEmail;
+  useEffect(() => {
+    prevActiveTenantRef.current = activeTenantEmail;
+  });
+
   // Reload isolated data when activeTenantEmail changes
   useEffect(() => {
     setProducts(loadTenantProducts(activeTenantEmail));
@@ -281,6 +300,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Persist tenant state to its dedicated partition
   useEffect(() => {
+    if (tenantSwitchedThisRender) return;
     try {
       const key = getTenantStorageKey(activeTenantEmail, 'products');
       localStorage.setItem(key, JSON.stringify(products));
@@ -290,6 +310,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [products, activeTenantEmail]);
 
   useEffect(() => {
+    if (tenantSwitchedThisRender) return;
     try {
       const key = getTenantStorageKey(activeTenantEmail, 'movements');
       localStorage.setItem(key, JSON.stringify(stockMovements));
@@ -299,6 +320,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [stockMovements, activeTenantEmail]);
 
   useEffect(() => {
+    if (tenantSwitchedThisRender) return;
     try {
       const key = getTenantStorageKey(activeTenantEmail, 'sales');
       localStorage.setItem(key, JSON.stringify(sales));
@@ -308,6 +330,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [sales, activeTenantEmail]);
 
   useEffect(() => {
+    if (tenantSwitchedThisRender) return;
     try {
       const key = getTenantStorageKey(activeTenantEmail, 'settings');
       localStorage.setItem(key, JSON.stringify(clinicSettings));
@@ -317,6 +340,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [clinicSettings, activeTenantEmail]);
 
   useEffect(() => {
+    if (tenantSwitchedThisRender) return;
     try {
       const key = getTenantStorageKey(activeTenantEmail, 'user');
       localStorage.setItem(key, JSON.stringify(userProfile));
@@ -479,9 +503,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const providedPin = options?.securityPin?.trim();
 
     if (!isVerifiedViaGoogle) {
-      const expectedPin = isTargetSuper
-        ? (registeredAccount?.securityPin || '8282')
-        : (registeredAccount?.securityPin || '1234');
+      // No default/guessable PIN fallback: every account must have its own
+      // securityPin explicitly configured by the SuperAdmin. This closes the
+      // "default PIN" hole that let any whitelisted-but-unconfigured account
+      // (or the SuperAdmin, if reset) log in with a widely-known value.
+      const expectedPin = registeredAccount?.securityPin;
+
+      if (!expectedPin) {
+        const msg = `Esta cuenta aún no tiene un PIN de seguridad configurado. Contacta al SuperAdmin (${SUPER_ADMIN_EMAIL}) para que te asigne uno antes de poder ingresar.`;
+        showToast(msg, 'error');
+        return { success: false, message: msg };
+      }
 
       if (!providedPin) {
         const msg = `Se requiere validación de seguridad: Autentícate directamente con tu cuenta de Google o ingresa el PIN / Clave de seguridad de tu cuenta.`;
@@ -572,6 +604,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...data,
       id: `adm-${Date.now().toString(36)}`,
       email: cleanEmail,
+      // Always ensure a real PIN exists - never leave this blank, since a
+      // missing PIN used to silently fall back to a guessable default.
+      securityPin: data.securityPin?.trim() || generateSecurityPin(),
       createdAt: new Date().toISOString(),
     };
 
