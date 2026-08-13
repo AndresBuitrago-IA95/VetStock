@@ -166,7 +166,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           {isNotificationsOpen && (
             <div 
               id="notifications-dropdown"
-              className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-stone-200 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150"
+              className="absolute right-0 mt-2 w-[calc(100vw-2rem)] max-w-96 bg-white rounded-2xl shadow-2xl border border-stone-200 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150"
             >
               <div className="p-3.5 bg-stone-50 border-b border-stone-100 flex items-center justify-between">
                 <div>
@@ -285,7 +285,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           {isUserMenuOpen && (
             <div
               id="user-profile-dropdown"
-              className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-stone-200 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150 p-2"
+              className="absolute right-0 mt-2 w-[calc(100vw-2rem)] max-w-64 bg-white rounded-2xl shadow-2xl border border-stone-200 overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150 p-2"
             >
               <div className="p-3 bg-stone-50 rounded-xl border border-stone-100 mb-1">
                 <div className="flex items-center gap-2 mb-1.5">

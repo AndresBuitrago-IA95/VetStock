@@ -1,1 +1,13 @@
 @import "tailwindcss";
+
+/* Extra-small breakpoint (Tailwind v4 has no default `xs:` variant, but the
+   app uses it in a few places to distinguish phones from small tablets). */
+@theme {
+  --breakpoint-xs: 420px;
+}
+
+/* Safety net: some fixed-width elements (dropdowns, wide tables) could
+   otherwise force the page to scroll sideways on very narrow phones. */
+html, body {
+  overflow-x: hidden;
+}
