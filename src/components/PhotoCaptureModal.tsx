@@ -118,7 +118,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
       <div 
         id="photo-modal-card"
-        className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-stone-200 flex flex-col max-h-[90vh]"
+        className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-stone-200 flex flex-col max-h-[90dvh]"
       >
         {/* Header */}
         <div className="p-4 border-b border-stone-100 flex items-center justify-between bg-stone-50/80">

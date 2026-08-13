@@ -60,7 +60,7 @@ const MainContent: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-stone-50 font-sans text-stone-800">
+    <div className="flex h-dvh w-full overflow-hidden bg-stone-50 font-sans text-stone-800">
       {/* Sidebar Navigation: on desktop, sits naturally as flex column without overlay */}
       <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
 

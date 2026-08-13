@@ -171,7 +171,7 @@ export const ProductFormModal: React.FC = () => {
           </div>
 
           {/* Form Form Body */}
-          <form onSubmit={handleSubmit} className="p-6 max-h-[80vh] overflow-y-auto space-y-6">
+          <form onSubmit={handleSubmit} className="p-6 max-h-[80dvh] overflow-y-auto space-y-6">
             
             {/* 1. SECCIÓN FOTOGRAFÍA DEL PRODUCTO (Requisito estricto: área grande con botones de tomar y subir) */}
             <div className="bg-stone-50/80 rounded-2xl p-5 border border-stone-200/80">

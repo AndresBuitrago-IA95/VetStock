@@ -499,7 +499,7 @@ export const AdminManagementView: React.FC = () => {
       {/* Modal: Create or Edit Admin */}
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[92vh] flex flex-col shadow-2xl border border-stone-200 overflow-hidden">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[92dvh] flex flex-col shadow-2xl border border-stone-200 overflow-hidden">
             
             <div className="p-5 sm:p-6 border-b border-stone-200 flex items-center justify-between bg-stone-50/80">
               <div>

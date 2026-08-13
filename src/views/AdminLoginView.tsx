@@ -191,7 +191,7 @@ export const AdminLoginView: React.FC = () => {
   const isSelectedSuper = selectedEmail.trim().toLowerCase() === superAdminEmail.toLowerCase();
 
   return (
-    <div className="min-h-screen w-screen bg-stone-100 flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans text-stone-800">
+    <div className="min-h-dvh w-full bg-stone-100 flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans text-stone-800">
       <div className="max-w-lg w-full bg-white rounded-3xl shadow-xl border border-stone-200/90 overflow-hidden">
         
         {/* Top Header Banner */}

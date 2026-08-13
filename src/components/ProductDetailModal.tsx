@@ -102,7 +102,7 @@ export const ProductDetailModal: React.FC = () => {
         </div>
 
         {/* Content */}
-        <div className="p-6 max-h-[80vh] overflow-y-auto space-y-6">
+        <div className="p-6 max-h-[80dvh] overflow-y-auto space-y-6">
           
           {/* Top section: Large image and key information */}
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 items-start">
