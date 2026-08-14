@@ -22,6 +22,7 @@ import {
   DEMO_SALES
 } from '../data/mockData';
 import { getProductStatus } from '../utils/formatters';
+import { api } from '../services/api';
 
 export interface DatabaseStats {
   adminEmail: string;
@@ -60,7 +61,7 @@ interface AppContextType {
     name?: string, 
     avatarUrl?: string, 
     options?: { securityPin?: string; isGoogleVerified?: boolean }
-  ) => { success: boolean; message: string };
+  ) => Promise<{ success: boolean; message: string }>;
   logoutAdmin: () => void;
   
   // SuperAdmin Account Management Actions
@@ -289,16 +290,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     prevActiveTenantRef.current = activeTenantEmail;
   });
 
-  // Reload isolated data when activeTenantEmail changes
+  // Initial sync with central server for admin accounts
+  useEffect(() => {
+    let isMounted = true;
+    api.getAdmins().then((serverAdmins) => {
+      if (isMounted && serverAdmins && serverAdmins.length > 0) {
+        setAdminAccounts(serverAdmins);
+        try {
+          localStorage.setItem(GLOBAL_STORAGE_KEYS.ADMIN_ACCOUNTS, JSON.stringify(serverAdmins));
+        } catch (e) {
+          console.warn('LocalStorage save error:', e);
+        }
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Reload isolated data when activeTenantEmail changes (Local cache first, then sync with server)
   useEffect(() => {
     setProducts(loadTenantProducts(activeTenantEmail));
     setStockMovements(loadTenantMovements(activeTenantEmail));
     setSales(loadTenantSales(activeTenantEmail));
     setClinicSettings(loadTenantSettings(activeTenantEmail));
     setUserProfile(loadTenantUser(activeTenantEmail));
+
+    // Fetch latest tenant cloud data if available
+    let isMounted = true;
+    api.getTenantData(activeTenantEmail).then((cloudData) => {
+      if (isMounted && cloudData) {
+        if (cloudData.products && cloudData.products.length > 0) setProducts(cloudData.products);
+        if (cloudData.movements && cloudData.movements.length > 0) setStockMovements(cloudData.movements);
+        if (cloudData.sales && cloudData.sales.length > 0) setSales(cloudData.sales);
+        if (cloudData.settings) setClinicSettings(cloudData.settings);
+        if (cloudData.user) setUserProfile(cloudData.user);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
   }, [activeTenantEmail]);
 
-  // Persist tenant state to its dedicated partition
+  // Persist tenant state to its dedicated partition and cloud backend
   useEffect(() => {
     if (tenantSwitchedThisRender) return;
     try {
@@ -348,6 +383,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('LocalStorage save error user:', e);
     }
   }, [userProfile, activeTenantEmail]);
+
+  // Sync tenant data to central server backend (debounced)
+  useEffect(() => {
+    if (tenantSwitchedThisRender) return;
+    const timer = setTimeout(() => {
+      api.syncTenantData(activeTenantEmail, {
+        products,
+        movements: stockMovements,
+        sales,
+        settings: clinicSettings,
+        user: userProfile,
+      }).catch((err) => console.warn('Cloud sync error:', err));
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [products, stockMovements, sales, clinicSettings, userProfile, activeTenantEmail]);
 
   // Global persistence for admin accounts & auth
   useEffect(() => {
@@ -470,13 +521,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [showToast]);
 
   // Google Login logic with SuperAdmin & Admin verification
-  const loginWithGoogle = (
+  const loginWithGoogle = async (
     email = SUPER_ADMIN_EMAIL,
     name = 'Andrés Buitrago',
     avatarUrl = 'https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c',
     options?: { securityPin?: string; isGoogleVerified?: boolean }
-  ): { success: boolean; message: string } => {
+  ): Promise<{ success: boolean; message: string }> => {
     const cleanEmail = email.trim().toLowerCase();
+    const isVerifiedViaGoogle = options?.isGoogleVerified === true;
+    const providedPin = options?.securityPin?.trim();
+
+    // 1. Authenticate against central server backend first (for cross-device / any network access)
+    try {
+      const serverAuth = await api.login(cleanEmail, providedPin, isVerifiedViaGoogle);
+      if (serverAuth && serverAuth.success && serverAuth.admin) {
+        const serverAcc = serverAuth.admin;
+        const isTargetSuper = serverAcc.role === 'SuperAdmin' || cleanEmail === SUPER_ADMIN_EMAIL.toLowerCase();
+
+        const admin: AdminUser = {
+          id: serverAcc.id,
+          name: serverAcc.name,
+          email: cleanEmail,
+          role: serverAcc.role as any,
+          isSuperAdmin: isTargetSuper,
+          avatarUrl: serverAcc.avatarUrl || avatarUrl,
+          provider: 'google',
+          loggedAt: new Date().toISOString(),
+          permissions: serverAcc.permissions,
+        };
+
+        setAdminUser(admin);
+        setActiveTenantEmail(cleanEmail);
+
+        // Fetch fresh admins list & sync local state
+        api.getAdmins().then((refreshedAdmins) => {
+          if (refreshedAdmins) {
+            setAdminAccounts(refreshedAdmins);
+            try {
+              localStorage.setItem(GLOBAL_STORAGE_KEYS.ADMIN_ACCOUNTS, JSON.stringify(refreshedAdmins));
+            } catch (e) {
+              console.warn(e);
+            }
+          }
+        });
+
+        // Fetch tenant data from server
+        api.getTenantData(cleanEmail).then((cloudData) => {
+          if (cloudData) {
+            if (cloudData.products && cloudData.products.length > 0) setProducts(cloudData.products);
+            if (cloudData.movements && cloudData.movements.length > 0) setStockMovements(cloudData.movements);
+            if (cloudData.sales && cloudData.sales.length > 0) setSales(cloudData.sales);
+            if (cloudData.settings) setClinicSettings(cloudData.settings);
+            if (cloudData.user) setUserProfile(cloudData.user);
+          }
+        });
+
+        const greeting = isTargetSuper
+          ? `👑 SuperAdmin verificado (${cleanEmail}). Acceso autorizado a tu base de datos principal y control global.`
+          : `Acceso verificado para ${serverAcc.name}. Has ingresado a tu base de datos (${serverAcc.role}).`;
+
+        showToast(greeting, 'success');
+        return { success: true, message: greeting };
+      } else if (serverAuth && !serverAuth.success && serverAuth.message) {
+        // If server explicitly rejected (PIN wrong, not found, or inactive)
+        const isConnectionError = serverAuth.message.includes('servidor') || serverAuth.message.includes('Failed to fetch');
+        if (!isConnectionError) {
+          showToast(serverAuth.message, 'error');
+          return { success: false, message: serverAuth.message };
+        }
+      }
+    } catch (e) {
+      console.warn('Server auth attempt failed, falling back to local verification:', e);
+    }
+
+    // 2. Fallback to local accounts if server is unreachable
     const cleanSuper = SUPER_ADMIN_EMAIL.toLowerCase();
     const isTargetSuper = cleanEmail === cleanSuper;
 
@@ -499,14 +617,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Security Verification: Check if verified via Google OAuth token or via valid Security PIN
-    const isVerifiedViaGoogle = options?.isGoogleVerified === true;
-    const providedPin = options?.securityPin?.trim();
-
     if (!isVerifiedViaGoogle) {
-      // No default/guessable PIN fallback: every account must have its own
-      // securityPin explicitly configured by the SuperAdmin. This closes the
-      // "default PIN" hole that let any whitelisted-but-unconfigured account
-      // (or the SuperAdmin, if reset) log in with a widely-known value.
       const expectedPin = registeredAccount?.securityPin;
 
       if (!expectedPin) {
@@ -604,13 +715,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...data,
       id: `adm-${Date.now().toString(36)}`,
       email: cleanEmail,
-      // Always ensure a real PIN exists - never leave this blank, since a
-      // missing PIN used to silently fall back to a guessable default.
       securityPin: data.securityPin?.trim() || generateSecurityPin(),
       createdAt: new Date().toISOString(),
     };
 
     setAdminAccounts((prev) => [newAccount, ...prev]);
+
+    // Central server persistence for multi-device sync
+    api.addAdmin(newAccount).catch((e) => console.warn('Failed to sync new admin with server:', e));
 
     // Initialize fresh empty isolated database for this new admin
     const pKey = getTenantStorageKey(cleanEmail, 'products');
@@ -652,32 +764,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAdminAccounts((prev) =>
       prev.map((a) => (a.id === id ? { ...a, ...data } : a))
     );
+    api.updateAdmin(id, data).catch((e) => console.warn('Failed to update admin on server:', e));
     showToast('Administrador actualizado correctamente', 'success');
   };
 
   const deleteAdminAccount = (id: string) => {
     const target = adminAccounts.find((a) => a.id === id);
-    if (target && target.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+    if (target && (target.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || target.email.toLowerCase() === 'andres.buitragos@udea.edu.co')) {
       showToast('No es posible eliminar la cuenta principal de SuperAdmin', 'error');
       return;
     }
     setAdminAccounts((prev) => prev.filter((a) => a.id !== id));
+    api.deleteAdmin(id).catch((e) => console.warn('Failed to delete admin on server:', e));
     showToast('Cuenta de administrador eliminada', 'info');
   };
 
   const toggleAdminStatus = (id: string) => {
     const target = adminAccounts.find((a) => a.id === id);
-    if (target && target.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+    if (target && (target.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() || target.email.toLowerCase() === 'andres.buitragos@udea.edu.co')) {
       showToast('La cuenta de SuperAdmin siempre debe permanecer activa', 'warning');
       return;
     }
+    const newStatus = target?.status === 'activo' ? 'inactivo' : 'activo';
     setAdminAccounts((prev) =>
       prev.map((a) =>
         a.id === id
-          ? { ...a, status: a.status === 'activo' ? 'inactivo' : 'activo' }
+          ? { ...a, status: newStatus }
           : a
       )
     );
+    api.updateAdmin(id, { status: newStatus }).catch((e) => console.warn('Failed to toggle admin status on server:', e));
     showToast('Estado del administrador actualizado', 'info');
   };
 
