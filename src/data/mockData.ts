@@ -24,6 +24,27 @@ export const INITIAL_ADMIN_ACCOUNTS: AdminAccount[] = [
     securityPin: '8282',
     notes: 'Propietario / SuperAdministrador del Sistema',
   },
+  {
+    id: 'adm-udea',
+    name: 'Andrés Buitrago (UdeA)',
+    email: 'andres.buitragos@udea.edu.co',
+    role: 'SuperAdmin',
+    avatarUrl: 'https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c',
+    status: 'activo',
+    phone: '+57 310 892 3411',
+    permissions: {
+      canManageAdmins: true,
+      canEditInventory: true,
+      canSell: true,
+      canEditSales: true,
+      canViewReports: true,
+      canDeleteProducts: true,
+    },
+    createdAt: '2026-01-01T00:00:00Z',
+    lastLoginAt: '2026-08-13T14:30:00Z',
+    securityPin: '8282',
+    notes: 'SuperAdministrador Institucional',
+  },
 ];
 
 export const INITIAL_CLINIC_SETTINGS: ClinicSettings = {
