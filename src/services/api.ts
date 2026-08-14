@@ -1,13 +1,25 @@
 import { AdminAccount, Product, StockMovement, Sale, ClinicSettings, UserProfile } from '../types';
 
+async function safeParseJson<T>(res: Response): Promise<T | null> {
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    return null;
+  }
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 export const api = {
   // 1. Fetch all admin accounts from server
   async getAdmins(): Promise<AdminAccount[] | null> {
     try {
       const res = await fetch('/api/admins');
       if (!res.ok) return null;
-      const data = await res.json();
-      return data.success ? data.admins : null;
+      const data = await safeParseJson<{ success: boolean; admins: AdminAccount[] }>(res);
+      return data?.success ? data.admins : null;
     } catch {
       return null;
     }
@@ -21,8 +33,8 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(account),
       });
-      const data = await res.json();
-      return data;
+      const data = await safeParseJson<{ success: boolean; admin?: AdminAccount; message?: string }>(res);
+      return data || { success: false, message: 'Respuesta inválida del servidor' };
     } catch (err: any) {
       return { success: false, message: err?.message || 'Error al conectar con el servidor' };
     }
@@ -36,8 +48,8 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
       });
-      const data = await res.json();
-      return data;
+      const data = await safeParseJson<{ success: boolean; admin?: AdminAccount; message?: string }>(res);
+      return data || { success: false, message: 'Respuesta inválida del servidor' };
     } catch (err: any) {
       return { success: false, message: err?.message || 'Error al conectar con el servidor' };
     }
@@ -49,8 +61,8 @@ export const api = {
       const res = await fetch(`/api/admins/${id}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
-      return data;
+      const data = await safeParseJson<{ success: boolean; message?: string }>(res);
+      return data || { success: false, message: 'Respuesta inválida del servidor' };
     } catch (err: any) {
       return { success: false, message: err?.message || 'Error al conectar con el servidor' };
     }
@@ -64,7 +76,10 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, securityPin, isGoogleVerified }),
       });
-      const data = await res.json();
+      const data = await safeParseJson<{ success: boolean; message: string; admin?: AdminAccount }>(res);
+      if (!data) {
+        return { success: false, message: 'Servidor no disponible en este entorno' };
+      }
       return data;
     } catch (err: any) {
       return { success: false, message: err?.message || 'Error de conexión con el servidor central' };
@@ -76,8 +91,8 @@ export const api = {
     try {
       const res = await fetch(`/api/tenant/${encodeURIComponent(email)}`);
       if (!res.ok) return null;
-      const json = await res.json();
-      return json.success ? json.data : null;
+      const json = await safeParseJson<{ success: boolean; data: any }>(res);
+      return json?.success ? json.data : null;
     } catch {
       return null;
     }
@@ -91,8 +106,8 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
-      const json = await res.json();
-      return json.success === true;
+      const json = await safeParseJson<{ success: boolean }>(res);
+      return json?.success === true;
     } catch {
       return false;
     }

@@ -45,6 +45,27 @@ export const INITIAL_ADMIN_ACCOUNTS: AdminAccount[] = [
     securityPin: '8282',
     notes: 'SuperAdministrador Institucional',
   },
+  {
+    id: 'adm-juan-pablo',
+    name: 'Juan Pablo Restrepo Murillo',
+    email: 'jprm1928@gmail.com',
+    role: 'Administrador',
+    avatarUrl: 'https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c',
+    status: 'activo',
+    phone: '+57 300 000 0000',
+    permissions: {
+      canManageAdmins: false,
+      canEditInventory: true,
+      canSell: true,
+      canEditSales: true,
+      canViewReports: true,
+      canDeleteProducts: true,
+    },
+    createdAt: '2026-01-01T00:00:00Z',
+    lastLoginAt: '2026-08-13T14:30:00Z',
+    securityPin: '8282',
+    notes: 'Administrador Autorizado',
+  },
 ];
 
 export const INITIAL_CLINIC_SETTINGS: ClinicSettings = {

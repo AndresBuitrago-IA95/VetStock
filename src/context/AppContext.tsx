@@ -145,21 +145,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }, 4500);
   }, []);
 
-  // Admin accounts list (Managed by SuperAdmin - starts only with SuperAdmin)
+  // Admin accounts list (Managed by SuperAdmin - includes initial default admins)
   const [adminAccounts, setAdminAccounts] = useState<AdminAccount[]>(() => {
     try {
       const saved = localStorage.getItem(GLOBAL_STORAGE_KEYS.ADMIN_ACCOUNTS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Ensure super admin is always present and remove legacy test accounts
         const filtered = parsed.filter(
           (a: AdminAccount) => a.email !== 'marcela.admin@almacencentral.co' && a.email !== 'carlos.ventas@almacencentral.co'
         );
-        const hasSuper = filtered.some((a: AdminAccount) => a.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase());
-        if (!hasSuper) {
-          return [INITIAL_ADMIN_ACCOUNTS[0], ...filtered];
+        // Merge initial accounts if missing
+        const merged = [...filtered];
+        for (const initAcc of INITIAL_ADMIN_ACCOUNTS) {
+          if (!merged.some((a: AdminAccount) => a.email.toLowerCase() === initAcc.email.toLowerCase())) {
+            merged.push(initAcc);
+          }
         }
-        return filtered;
+        return merged;
       }
       return INITIAL_ADMIN_ACCOUNTS;
     } catch {
@@ -583,8 +585,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast(greeting, 'success');
         return { success: true, message: greeting };
       } else if (serverAuth && !serverAuth.success && serverAuth.message) {
-        // If server explicitly rejected (PIN wrong, not found, or inactive)
-        const isConnectionError = serverAuth.message.includes('servidor') || serverAuth.message.includes('Failed to fetch');
+        // If server connection is unavailable or returned non-JSON, fall back gracefully to local accounts
+        const isConnectionError = 
+          serverAuth.message.includes('servidor') || 
+          serverAuth.message.includes('Failed to fetch') || 
+          serverAuth.message.includes('no disponible') ||
+          serverAuth.message.includes('inválida');
+          
         if (!isConnectionError) {
           showToast(serverAuth.message, 'error');
           return { success: false, message: serverAuth.message };

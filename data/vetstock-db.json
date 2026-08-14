@@ -1,0 +1,69 @@
+{
+  "adminAccounts": [
+    {
+      "id": "adm-super",
+      "name": "Andrés Buitrago",
+      "email": "andrezbuitrago82@gmail.com",
+      "role": "SuperAdmin",
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c",
+      "status": "activo",
+      "phone": "+57 310 892 3411",
+      "permissions": {
+        "canManageAdmins": true,
+        "canEditInventory": true,
+        "canSell": true,
+        "canEditSales": true,
+        "canViewReports": true,
+        "canDeleteProducts": true
+      },
+      "createdAt": "2026-01-01T00:00:00Z",
+      "lastLoginAt": "2026-08-13T14:30:00Z",
+      "securityPin": "8282",
+      "notes": "Propietario / SuperAdministrador del Sistema"
+    },
+    {
+      "id": "adm-udea",
+      "name": "Andrés Buitrago (UdeA)",
+      "email": "andres.buitragos@udea.edu.co",
+      "role": "SuperAdmin",
+      "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c",
+      "status": "activo",
+      "phone": "+57 310 892 3411",
+      "permissions": {
+        "canManageAdmins": true,
+        "canEditInventory": true,
+        "canSell": true,
+        "canEditSales": true,
+        "canViewReports": true,
+        "canDeleteProducts": true
+      },
+      "createdAt": "2026-01-01T00:00:00Z",
+      "lastLoginAt": "2026-08-13T14:30:00Z",
+      "securityPin": "8282",
+      "notes": "SuperAdministrador Institucional"
+    }
+  ],
+  "tenants": {
+    "andrezbuitrago82@gmail.com": {
+      "products": [],
+      "movements": [],
+      "sales": [],
+      "settings": {
+        "name": "Veterinaria & Almacén Central",
+        "address": "Calle Principal # 10-20, Bogotá D.C., Colombia",
+        "phone": "+57 (601) 745-8920 / +57 310 892 3411",
+        "email": "andrezbuitrago82@gmail.com",
+        "nit": "901.348.912-7",
+        "defaultMinStock": 5,
+        "expiringDaysThreshold": 30,
+        "currencySymbol": "COP"
+      },
+      "user": {
+        "name": "Andrés Buitrago",
+        "email": "andrezbuitrago82@gmail.com",
+        "role": "SuperAdmin",
+        "avatarUrl": "https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c"
+      }
+    }
+  }
+}
