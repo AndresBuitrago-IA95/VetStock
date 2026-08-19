@@ -743,6 +743,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } as any);
     }
 
+    // Auto-bootstrap jprm1928@gmail.com if it doesn't exist yet
+    if (isTargetSuper) {
+      const jpEmail = 'jprm1928@gmail.com';
+      const hasJp = adminAccounts.find(a => a.email.toLowerCase() === jpEmail);
+      if (!hasJp) {
+        api.addAdmin({
+          name: 'Administrador JP',
+          email: jpEmail,
+          role: 'Administrador',
+          status: 'activo',
+          avatarUrl: '',
+          permissions: {
+            canManageAdmins: false,
+            canEditInventory: true,
+            canSell: true,
+            canEditSales: true,
+            canViewReports: true,
+            canDeleteProducts: false,
+          },
+          notes: 'Agregado por sistema',
+        } as any).catch(console.warn);
+      }
+    }
+
     const greeting = isTargetSuper
       ? `👑 SuperAdmin verificado (${cleanEmail}). Acceso seguro a la nube autorizado.`
       : `Acceso verificado en la nube para ${effectiveName} (${effectiveRole}).`;
