@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { ActiveTab } from '../types';
-import { GoogleLogo } from '../views/AdminLoginView';
+// removed GoogleLogo
 
 interface SidebarProps {
   isOpen: boolean;
@@ -180,7 +180,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                     className="w-9 h-9 rounded-xl object-cover ring-2 ring-emerald-600/30"
                   />
                   <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-white shadow-xs p-0.5 flex items-center justify-center">
-                    <GoogleLogo className="w-3 h-3" />
+                    <span>⚡</span>
                   </div>
                 </div>
                 <div className="min-w-0">
@@ -303,7 +303,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                   className="w-9 h-9 rounded-xl object-cover ring-2 ring-emerald-600/30"
                 />
                 <div className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-white shadow-xs p-0.5 flex items-center justify-center">
-                  <GoogleLogo className="w-3 h-3" />
+                  <span>⚡</span>
                 </div>
               </div>
               <div className="min-w-0">

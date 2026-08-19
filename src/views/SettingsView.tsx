@@ -20,7 +20,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { GoogleLogo } from './AdminLoginView';
+// removed GoogleLogo
 import { formatCOP } from '../utils/formatters';
 
 export const SettingsView: React.FC = () => {
@@ -348,7 +348,7 @@ export const SettingsView: React.FC = () => {
             <div className="flex items-center justify-between pb-3 border-b border-stone-100">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-stone-100 flex items-center justify-center">
-                  <GoogleLogo className="w-4 h-4" />
+                  <span>⚡</span>
                 </div>
                 <div>
                   <h3 className="font-bold text-stone-900 text-sm">

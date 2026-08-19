@@ -19,7 +19,7 @@ import {
   Wifi
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { GoogleLogo } from '../views/AdminLoginView';
+// removed GoogleLogo
 
 interface HeaderProps {
   onToggleSidebar: () => void;
@@ -330,7 +330,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
                 className="w-8 h-8 rounded-full object-cover ring-2 ring-emerald-600/20"
               />
               <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-white shadow-2xs p-0.5 flex items-center justify-center">
-                <GoogleLogo className="w-2.5 h-2.5" />
+                <span>⚡</span>
               </div>
             </div>
             <div className="hidden lg:block text-left">
@@ -351,7 +351,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
             >
               <div className="p-3 bg-stone-50 rounded-xl border border-stone-100 mb-1">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <GoogleLogo className="w-4 h-4" />
+                  <span>⚡</span>
                   <span className="text-[11px] font-bold text-stone-700">
                     Cuenta Google Vinculada
                   </span>
