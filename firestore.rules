@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global lock
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Auth Helpers
+    function isSignedIn() { 
+      return request.auth != null && request.auth.token.email_verified == true; 
+    }
+    
+    function isHardcodedSuperAdmin() {
+      return isSignedIn() && request.auth.token.email == 'andrezbuitrago82@gmail.com';
+    }
+
+    function isKnownAdmin() {
+      return isHardcodedSuperAdmin() || exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
+    }
+    
+    function isSuperAdmin() {
+      return isHardcodedSuperAdmin() || (exists(/databases/$(database)/documents/admins/$(request.auth.token.email)) && get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.role == 'SuperAdmin');
+    }
+
+    // Admins Collection
+    match /admins/{adminEmail} {
+      allow read: if isSignedIn() && isKnownAdmin();
+      allow write: if isSignedIn() && isSuperAdmin();
+    }
+
+    // Tenants Collection
+    match /tenants/{tenantEmail} {
+      allow read, write: if isSignedIn() && isKnownAdmin();
+    }
+  }
+}

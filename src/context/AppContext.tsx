@@ -297,129 +297,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     prevActiveTenantRef.current = activeTenantEmail;
   });
 
-  // Initial sync and periodic real-time polling with central server
-  useEffect(() => {
-    let isMounted = true;
-
-    const fetchServerAdmins = async () => {
-      try {
-        const serverAdmins = await api.getAdmins();
-        if (isMounted && serverAdmins && serverAdmins.length > 0) {
-          setAdminAccounts((prev) => {
-            if (JSON.stringify(prev) !== JSON.stringify(serverAdmins)) {
-              try {
-                localStorage.setItem(GLOBAL_STORAGE_KEYS.ADMIN_ACCOUNTS, JSON.stringify(serverAdmins));
-              } catch (e) {
-                console.warn('LocalStorage save error:', e);
-              }
-              return serverAdmins;
-            }
-            return prev;
-          });
-        }
-      } catch (err) {
-        console.warn('Polling server admins error:', err);
-      }
-    };
-
-    // Initial fetch
-    fetchServerAdmins();
-
-    // Poll every 3.5 seconds for cross-device updates
-    const pollInterval = setInterval(fetchServerAdmins, 3500);
-
-    // Also sync immediately when window or tab becomes active
-    const handleFocus = () => {
-      fetchServerAdmins();
-    };
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleFocus);
-
-    return () => {
-      isMounted = false;
-      clearInterval(pollInterval);
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleFocus);
-    };
-  }, []);
-
-  // Reload isolated data when activeTenantEmail changes and periodically poll for active tenant
+  // Reload isolated data when activeTenantEmail changes
   useEffect(() => {
     setProducts(loadTenantProducts(activeTenantEmail));
     setStockMovements(loadTenantMovements(activeTenantEmail));
     setSales(loadTenantSales(activeTenantEmail));
     setClinicSettings(loadTenantSettings(activeTenantEmail));
     setUserProfile(loadTenantUser(activeTenantEmail));
-
-    let isMounted = true;
-
-    const fetchTenantCloudData = async () => {
-      if (!activeTenantEmail) return;
-      try {
-        const cloudData = await api.getTenantData(activeTenantEmail);
-        if (isMounted && cloudData) {
-          if (Array.isArray(cloudData.products)) {
-            setProducts((prev) => {
-              if (JSON.stringify(prev) !== JSON.stringify(cloudData.products)) {
-                return cloudData.products;
-              }
-              return prev;
-            });
-          }
-          if (Array.isArray(cloudData.movements)) {
-            setStockMovements((prev) => {
-              if (JSON.stringify(prev) !== JSON.stringify(cloudData.movements)) {
-                return cloudData.movements;
-              }
-              return prev;
-            });
-          }
-          if (Array.isArray(cloudData.sales)) {
-            setSales((prev) => {
-              if (JSON.stringify(prev) !== JSON.stringify(cloudData.sales)) {
-                return cloudData.sales;
-              }
-              return prev;
-            });
-          }
-          if (cloudData.settings) {
-            setClinicSettings((prev) => {
-              if (JSON.stringify(prev) !== JSON.stringify(cloudData.settings)) {
-                return cloudData.settings;
-              }
-              return prev;
-            });
-          }
-          if (cloudData.user) {
-            setUserProfile((prev) => {
-              if (JSON.stringify(prev) !== JSON.stringify(cloudData.user)) {
-                return cloudData.user;
-              }
-              return prev;
-            });
-          }
-        }
-      } catch (err) {
-        console.warn('Fetch tenant cloud data error:', err);
-      }
-    };
-
-    fetchTenantCloudData();
-
-    // Poll tenant data every 4 seconds for multi-device sync
-    const tenantInterval = setInterval(fetchTenantCloudData, 4000);
-    const handleFocus = () => {
-      fetchTenantCloudData();
-    };
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleFocus);
-
-    return () => {
-      isMounted = false;
-      clearInterval(tenantInterval);
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleFocus);
-    };
   }, [activeTenantEmail]);
 
   // Persist tenant state to its dedicated partition and cloud backend
@@ -517,77 +401,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const lastServerTimestampRef = useRef<number>(0);
   const isInitialCloudLoadRef = useRef<boolean>(false);
 
-  // Fetch full state from Cloud Server
-  const fetchCloudState = useCallback(async (tenantEmail: string, silent: boolean = false) => {
-    if (isSyncingRef.current) return;
-    if (!navigator.onLine) {
-      setSyncStatus('offline');
-      return;
-    }
+  // --- FIREBASE REAL-TIME SUBSCRIPTIONS ---
 
-    try {
-      if (!silent) setSyncStatus('syncing');
-      isSyncingRef.current = true;
-
-      const response = await fetch(`/api/sync/state?tenant=${encodeURIComponent(tenantEmail)}`);
-      if (!response.ok) throw new Error(`HTTP error ${response.status}`);
-
-      const data = await response.json();
-      if (data.success) {
-        lastServerTimestampRef.current = data.serverTime || Date.now();
-
-        // If cloud has tenant data
-        if (data.tenant) {
-          const cloudTenant = data.tenant;
-
-          if (Array.isArray(cloudTenant.products) && (cloudTenant.products.length > 0 || isInitialCloudLoadRef.current)) {
-            setProducts(cloudTenant.products);
-            const pKey = getTenantStorageKey(tenantEmail, 'products');
-            localStorage.setItem(pKey, JSON.stringify(cloudTenant.products));
-          }
-
-          if (Array.isArray(cloudTenant.stockMovements)) {
-            setStockMovements(cloudTenant.stockMovements);
-            const mKey = getTenantStorageKey(tenantEmail, 'movements');
-            localStorage.setItem(mKey, JSON.stringify(cloudTenant.stockMovements));
-          }
-
-          if (Array.isArray(cloudTenant.sales)) {
-            setSales(cloudTenant.sales);
-            const sKey = getTenantStorageKey(tenantEmail, 'sales');
-            localStorage.setItem(sKey, JSON.stringify(cloudTenant.sales));
-          }
-
-          if (cloudTenant.clinicSettings) {
-            setClinicSettings(cloudTenant.clinicSettings);
-            const setKey = getTenantStorageKey(tenantEmail, 'settings');
-            localStorage.setItem(setKey, JSON.stringify(cloudTenant.clinicSettings));
-          }
-
-          if (cloudTenant.userProfile) {
-            setUserProfile(cloudTenant.userProfile);
-            const uKey = getTenantStorageKey(tenantEmail, 'user');
-            localStorage.setItem(uKey, JSON.stringify(cloudTenant.userProfile));
-          }
-        }
-
-        // Sync admin accounts if received
-        if (Array.isArray(data.adminAccounts) && data.adminAccounts.length > 0) {
-          setAdminAccounts(data.adminAccounts);
-          localStorage.setItem(GLOBAL_STORAGE_KEYS.ADMIN_ACCOUNTS, JSON.stringify(data.adminAccounts));
-        }
-
-        setSyncStatus('synced');
-        setLastSyncTime(new Date());
-        isInitialCloudLoadRef.current = true;
-      }
-    } catch (err) {
-      console.warn('Cloud sync fetch warning:', err);
-      setSyncStatus(navigator.onLine ? 'error' : 'offline');
-    } finally {
-      isSyncingRef.current = false;
-    }
-  }, []);
+  // Manual Trigger for Full Sync (Now just a visual cue, Firebase is always real-time)
+  const syncWithCloud = useCallback(async () => {
+    setSyncStatus('syncing');
+    showToast('Sincronizando datos con la nube...', 'info');
+    setTimeout(() => {
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      showToast('Base de datos sincronizada', 'success');
+    }, 800);
+  }, [showToast]);
 
   // Push local state to Cloud Server
   const pushCloudState = useCallback(async (
@@ -598,117 +423,81 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       sales?: Sale[];
       clinicSettings?: ClinicSettings;
       userProfile?: UserProfile;
-      adminAccounts?: AdminAccount[];
     }
   ) => {
     if (!navigator.onLine) {
       setSyncStatus('offline');
       return;
     }
-
     try {
       setSyncStatus('syncing');
-
-      const payload = {
-        tenantEmail,
+      await api.syncTenantData(tenantEmail, {
         products: overrideData?.products ?? products,
-        stockMovements: overrideData?.stockMovements ?? stockMovements,
+        movements: overrideData?.stockMovements ?? stockMovements,
         sales: overrideData?.sales ?? sales,
-        clinicSettings: overrideData?.clinicSettings ?? clinicSettings,
-        userProfile: overrideData?.userProfile ?? userProfile,
-        adminAccounts: overrideData?.adminAccounts ?? adminAccounts,
-      };
-
-      const response = await fetch('/api/sync/state', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        settings: overrideData?.clinicSettings ?? clinicSettings,
+        user: overrideData?.userProfile ?? userProfile,
       });
-
-      if (!response.ok) throw new Error(`HTTP push error ${response.status}`);
-      const resData = await response.json();
-      if (resData.success) {
-        lastServerTimestampRef.current = resData.serverTime || Date.now();
-        setSyncStatus('synced');
-        setLastSyncTime(new Date());
-      }
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
     } catch (err) {
       console.warn('Cloud sync push warning:', err);
       setSyncStatus(navigator.onLine ? 'error' : 'offline');
     }
-  }, [products, stockMovements, sales, clinicSettings, userProfile, adminAccounts]);
+  }, [products, stockMovements, sales, clinicSettings, userProfile]);
 
-  // Manual Trigger for Full Sync
-  const syncWithCloud = useCallback(async () => {
+  // Real-time listener for active tenant data
+  useEffect(() => {
+    if (!activeTenantEmail) return;
+    
     setSyncStatus('syncing');
-    showToast('Sincronizando datos con la nube y otros dispositivos...', 'info');
-    await fetchCloudState(activeTenantEmail, false);
-    await pushCloudState(activeTenantEmail);
-    showToast('Base de datos sincronizada en todos los dispositivos', 'success');
-  }, [activeTenantEmail, fetchCloudState, pushCloudState, showToast]);
+    const unsubscribe = api.subscribeToTenantData(activeTenantEmail, (cloudTenant) => {
+      if (cloudTenant) {
+        if (Array.isArray(cloudTenant.products)) setProducts(cloudTenant.products);
+        if (Array.isArray(cloudTenant.movements)) setStockMovements(cloudTenant.movements);
+        if (Array.isArray(cloudTenant.sales)) setSales(cloudTenant.sales);
+        if (cloudTenant.settings) setClinicSettings(cloudTenant.settings);
+        if (cloudTenant.user) setUserProfile(cloudTenant.user);
+        
+        setSyncStatus('synced');
+        setLastSyncTime(new Date());
+        isInitialCloudLoadRef.current = true;
+      }
+    });
 
-  // Initial cloud state sync on mount or tenant switch
-  useEffect(() => {
-    fetchCloudState(activeTenantEmail, false);
-  }, [activeTenantEmail, fetchCloudState]);
+    return () => unsubscribe();
+  }, [activeTenantEmail]);
 
-  // Auto-sync debounced trigger whenever state changes
+  // Real-time listener for admins globally
   useEffect(() => {
-    if (!isInitialCloudLoadRef.current) return;
+    const unsubscribe = api.subscribeToAdmins((admins) => {
+      if (admins && admins.length > 0) {
+        setAdminAccounts(admins);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Auto-sync debounced trigger whenever state changes locally
+  useEffect(() => {
+    if (!isInitialCloudLoadRef.current || tenantSwitchedThisRender) return;
     const timer = setTimeout(() => {
       pushCloudState(activeTenantEmail);
-    }, 1200);
+    }, 1500);
     return () => clearTimeout(timer);
-  }, [products, stockMovements, sales, clinicSettings, userProfile, adminAccounts, activeTenantEmail, pushCloudState]);
+  }, [products, stockMovements, sales, clinicSettings, userProfile, activeTenantEmail, pushCloudState]);
 
-  // Real-time polling across devices every 3.5s
+  // Network status handlers
   useEffect(() => {
-    const pollInterval = setInterval(async () => {
-      if (!navigator.onLine || document.hidden || isSyncingRef.current) return;
-
-      try {
-        const url = `/api/sync/poll?tenant=${encodeURIComponent(activeTenantEmail)}&since=${lastServerTimestampRef.current}`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const pollData = await res.json();
-          if (pollData.hasNewData) {
-            // New changes detected from another device/browser
-            await fetchCloudState(activeTenantEmail, true);
-          }
-        }
-      } catch {
-        // Ignore background polling errors
-      }
-    }, 3500);
-
-    return () => clearInterval(pollInterval);
-  }, [activeTenantEmail, fetchCloudState]);
-
-  // Sync on window focus or coming back online
-  useEffect(() => {
-    const handleFocus = () => {
-      if (navigator.onLine) {
-        fetchCloudState(activeTenantEmail, true);
-      }
-    };
-    const handleOnline = () => {
-      setSyncStatus('syncing');
-      fetchCloudState(activeTenantEmail, false);
-    };
-    const handleOffline = () => {
-      setSyncStatus('offline');
-    };
-
-    window.addEventListener('focus', handleFocus);
+    const handleOnline = () => setSyncStatus('synced');
+    const handleOffline = () => setSyncStatus('offline');
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
-
     return () => {
-      window.removeEventListener('focus', handleFocus);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [activeTenantEmail, fetchCloudState]);
+  }, []);
 
   // Modals state
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -809,93 +598,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [showToast]);
 
-  // Google Login logic with SuperAdmin & Admin verification
+  // Google Login logic via Firebase
   const loginWithGoogle = async (
     email = SUPER_ADMIN_EMAIL,
     name = 'Andrés Buitrago',
     avatarUrl = 'https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c',
-    options?: { securityPin?: string; isGoogleVerified?: boolean }
+    options?: { isGoogleVerified?: boolean }
   ): Promise<{ success: boolean; message: string }> => {
     const cleanEmail = email.trim().toLowerCase();
-    const isVerifiedViaGoogle = options?.isGoogleVerified === true;
-    const providedPin = options?.securityPin?.trim();
 
-    // 1. Authenticate against central server backend first (for cross-device / any network access)
-    try {
-      const serverAuth = await api.login(cleanEmail, providedPin, isVerifiedViaGoogle);
-      if (serverAuth && serverAuth.success && serverAuth.admin) {
-        const serverAcc = serverAuth.admin;
-        const isTargetSuper = serverAcc.role === 'SuperAdmin' || cleanEmail === SUPER_ADMIN_EMAIL.toLowerCase();
-
-        const admin: AdminUser = {
-          id: serverAcc.id,
-          name: serverAcc.name,
-          email: cleanEmail,
-          role: serverAcc.role as any,
-          isSuperAdmin: isTargetSuper,
-          avatarUrl: serverAcc.avatarUrl || avatarUrl,
-          provider: 'google',
-          loggedAt: new Date().toISOString(),
-          permissions: serverAcc.permissions,
-        };
-
-        setAdminUser(admin);
-        setActiveTenantEmail(cleanEmail);
-
-        // Fetch fresh admins list & sync local state
-        api.getAdmins().then((refreshedAdmins) => {
-          if (refreshedAdmins) {
-            setAdminAccounts(refreshedAdmins);
-            try {
-              localStorage.setItem(GLOBAL_STORAGE_KEYS.ADMIN_ACCOUNTS, JSON.stringify(refreshedAdmins));
-            } catch (e) {
-              console.warn(e);
-            }
-          }
-        });
-
-        // Fetch tenant data from server
-        api.getTenantData(cleanEmail).then((cloudData) => {
-          if (cloudData) {
-            if (cloudData.products && cloudData.products.length > 0) setProducts(cloudData.products);
-            if (cloudData.movements && cloudData.movements.length > 0) setStockMovements(cloudData.movements);
-            if (cloudData.sales && cloudData.sales.length > 0) setSales(cloudData.sales);
-            if (cloudData.settings) setClinicSettings(cloudData.settings);
-            if (cloudData.user) setUserProfile(cloudData.user);
-          }
-        });
-
-        const greeting = isTargetSuper
-          ? `👑 SuperAdmin verificado (${cleanEmail}). Acceso autorizado a tu base de datos principal y control global.`
-          : `Acceso verificado para ${serverAcc.name}. Has ingresado a tu base de datos (${serverAcc.role}).`;
-
-        showToast(greeting, 'success');
-        return { success: true, message: greeting };
-      } else if (serverAuth && !serverAuth.success && serverAuth.message) {
-        // If server connection is unavailable or returned non-JSON, fall back gracefully to local accounts
-        const isConnectionError = 
-          serverAuth.message.includes('servidor') || 
-          serverAuth.message.includes('Failed to fetch') || 
-          serverAuth.message.includes('no disponible') ||
-          serverAuth.message.includes('inválida');
-          
-        if (!isConnectionError) {
-          showToast(serverAuth.message, 'error');
-          return { success: false, message: serverAuth.message };
-        }
-      }
-    } catch (e) {
-      console.warn('Server auth attempt failed, falling back to local verification:', e);
-    }
-
-    // 2. Fallback to local accounts if server is unreachable
-    const cleanSuper = SUPER_ADMIN_EMAIL.toLowerCase();
-    const isTargetSuper = cleanEmail === cleanSuper;
-
-    // Check if account exists in adminAccounts
-    const registeredAccount = adminAccounts.find(
+    // Check if account exists in adminAccounts from Firestore
+    let registeredAccount = adminAccounts.find(
       (acc) => acc.email.trim().toLowerCase() === cleanEmail
     );
+    
+    // Refresh admins list from Firebase just to be sure
+    try {
+      const serverAdmins = await api.getAdmins();
+      if (serverAdmins && serverAdmins.length > 0) {
+        setAdminAccounts(serverAdmins);
+        registeredAccount = serverAdmins.find((acc) => acc.email.trim().toLowerCase() === cleanEmail);
+      }
+    } catch (e) {
+      console.warn('Failed to refresh admins during login', e);
+    }
+
+    const cleanSuper = SUPER_ADMIN_EMAIL.toLowerCase();
+    const isTargetSuper = cleanEmail === cleanSuper;
 
     // If it's not SuperAdmin and not registered or inactive
     if (!isTargetSuper && !registeredAccount) {
@@ -908,29 +637,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const msg = `Acceso restringido: La cuenta para "${email}" se encuentra suspendida o inactiva por el SuperAdmin.`;
       showToast(msg, 'warning');
       return { success: false, message: msg };
-    }
-
-    // Security Verification: Check if verified via Google OAuth token or via valid Security PIN
-    if (!isVerifiedViaGoogle) {
-      const expectedPin = registeredAccount?.securityPin;
-
-      if (!expectedPin) {
-        const msg = `Esta cuenta aún no tiene un PIN de seguridad configurado. Contacta al SuperAdmin (${SUPER_ADMIN_EMAIL}) para que te asigne uno antes de poder ingresar.`;
-        showToast(msg, 'error');
-        return { success: false, message: msg };
-      }
-
-      if (!providedPin) {
-        const msg = `Se requiere validación de seguridad: Autentícate directamente con tu cuenta de Google o ingresa el PIN / Clave de seguridad de tu cuenta.`;
-        showToast(msg, 'error');
-        return { success: false, message: msg };
-      }
-
-      if (providedPin !== expectedPin) {
-        const msg = `PIN o Clave de Seguridad incorrecta para la cuenta "${cleanEmail}". Verifica tus credenciales.`;
-        showToast(msg, 'error');
-        return { success: false, message: msg };
-      }
     }
 
     const effectiveRole = isTargetSuper 
@@ -974,18 +680,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAdminUser(admin);
     setActiveTenantEmail(cleanEmail);
 
-    // Update lastLoginAt in accounts list
-    setAdminAccounts((prev) =>
-      prev.map((acc) =>
-        acc.email.toLowerCase() === cleanEmail
-          ? { ...acc, lastLoginAt: new Date().toISOString() }
-          : acc
-      )
-    );
+    // Fetch tenant data from Firebase
+    try {
+      const cloudData = await api.getTenantData(cleanEmail);
+      if (cloudData) {
+        if (cloudData.products && cloudData.products.length > 0) setProducts(cloudData.products);
+        if (cloudData.movements && cloudData.movements.length > 0) setStockMovements(cloudData.movements);
+        if (cloudData.sales && cloudData.sales.length > 0) setSales(cloudData.sales);
+        if (cloudData.settings) setClinicSettings(cloudData.settings);
+        if (cloudData.user) setUserProfile(cloudData.user);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch initial tenant data', e);
+    }
+
+    // Update lastLoginAt in Firebase
+    if (registeredAccount) {
+      api.updateAdmin(registeredAccount.id, { lastLoginAt: new Date().toISOString() });
+    } else if (isTargetSuper) {
+      // Bootstrap SuperAdmin in Firebase if missing
+      api.addAdmin({
+        name: effectiveName,
+        email: cleanEmail,
+        role: 'SuperAdmin',
+        status: 'activo',
+        avatarUrl,
+        phone: '',
+        permissions: effectivePermissions,
+        notes: 'Creado automáticamente',
+      } as any);
+    }
 
     const greeting = isTargetSuper
-      ? `👑 SuperAdmin verificado (${cleanEmail}). Acceso autorizado a tu base de datos principal y control global.`
-      : `Acceso verificado para ${effectiveName}. Has ingresado a tu base de datos (${effectiveRole}).`;
+      ? `👑 SuperAdmin verificado (${cleanEmail}). Acceso seguro a la nube autorizado.`
+      : `Acceso verificado en la nube para ${effectiveName} (${effectiveRole}).`;
 
     showToast(greeting, 'success');
     return { success: true, message: greeting };

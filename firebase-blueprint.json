@@ -1,0 +1,48 @@
+{
+  "entities": {
+    "AdminAccount": {
+      "title": "Admin Account",
+      "description": "Administrator account with role and permissions.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["SuperAdmin", "Administrador"] },
+        "avatarUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["activo", "inactivo"] },
+        "phone": { "type": "string" },
+        "permissions": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["email", "role", "status"]
+    },
+    "TenantData": {
+      "title": "Tenant Data",
+      "description": "All data for a specific tenant.",
+      "type": "object",
+      "properties": {
+        "ownerEmail": { "type": "string" },
+        "products": { "type": "array" },
+        "movements": { "type": "array" },
+        "sales": { "type": "array" },
+        "settings": { "type": "object" },
+        "user": { "type": "object" },
+        "lastUpdated": { "type": "number" }
+      },
+      "required": ["ownerEmail"]
+    }
+  },
+  "firestore": {
+    "admins/{adminEmail}": {
+      "schema": { "$ref": "#/entities/AdminAccount" },
+      "description": "Global list of authorized admin accounts keyed by email."
+    },
+    "tenants/{tenantEmail}": {
+      "schema": { "$ref": "#/entities/TenantData" },
+      "description": "Tenant-specific isolated database."
+    }
+  }
+}
