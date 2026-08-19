@@ -104,6 +104,11 @@ interface AppContextType {
   expiringProducts: Product[];
   totalAlertsCount: number;
 
+  // Cloud Sync & Connectivity (Multi-device)
+  syncStatus: 'synced' | 'syncing' | 'offline' | 'error';
+  lastSyncTime: Date | null;
+  syncWithCloud: () => Promise<void>;
+
   // Toast notifications
   toastMessage: string | null;
   toastType: 'success' | 'info' | 'warning' | 'error';
@@ -422,6 +427,206 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('LocalStorage save error auth:', e);
     }
   }, [adminUser]);
+
+  // Cloud Sync & Connectivity State
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('syncing');
+  const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const isSyncingRef = useRef<boolean>(false);
+  const lastServerTimestampRef = useRef<number>(0);
+  const isInitialCloudLoadRef = useRef<boolean>(false);
+
+  // Fetch full state from Cloud Server
+  const fetchCloudState = useCallback(async (tenantEmail: string, silent: boolean = false) => {
+    if (isSyncingRef.current) return;
+    if (!navigator.onLine) {
+      setSyncStatus('offline');
+      return;
+    }
+
+    try {
+      if (!silent) setSyncStatus('syncing');
+      isSyncingRef.current = true;
+
+      const response = await fetch(`/api/sync/state?tenant=${encodeURIComponent(tenantEmail)}`);
+      if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+
+      const data = await response.json();
+      if (data.success) {
+        lastServerTimestampRef.current = data.serverTime || Date.now();
+
+        // If cloud has tenant data
+        if (data.tenant) {
+          const cloudTenant = data.tenant;
+
+          if (Array.isArray(cloudTenant.products) && (cloudTenant.products.length > 0 || isInitialCloudLoadRef.current)) {
+            setProducts(cloudTenant.products);
+            const pKey = getTenantStorageKey(tenantEmail, 'products');
+            localStorage.setItem(pKey, JSON.stringify(cloudTenant.products));
+          }
+
+          if (Array.isArray(cloudTenant.stockMovements)) {
+            setStockMovements(cloudTenant.stockMovements);
+            const mKey = getTenantStorageKey(tenantEmail, 'movements');
+            localStorage.setItem(mKey, JSON.stringify(cloudTenant.stockMovements));
+          }
+
+          if (Array.isArray(cloudTenant.sales)) {
+            setSales(cloudTenant.sales);
+            const sKey = getTenantStorageKey(tenantEmail, 'sales');
+            localStorage.setItem(sKey, JSON.stringify(cloudTenant.sales));
+          }
+
+          if (cloudTenant.clinicSettings) {
+            setClinicSettings(cloudTenant.clinicSettings);
+            const setKey = getTenantStorageKey(tenantEmail, 'settings');
+            localStorage.setItem(setKey, JSON.stringify(cloudTenant.clinicSettings));
+          }
+
+          if (cloudTenant.userProfile) {
+            setUserProfile(cloudTenant.userProfile);
+            const uKey = getTenantStorageKey(tenantEmail, 'user');
+            localStorage.setItem(uKey, JSON.stringify(cloudTenant.userProfile));
+          }
+        }
+
+        // Sync admin accounts if received
+        if (Array.isArray(data.adminAccounts) && data.adminAccounts.length > 0) {
+          setAdminAccounts(data.adminAccounts);
+          localStorage.setItem(GLOBAL_STORAGE_KEYS.ADMIN_ACCOUNTS, JSON.stringify(data.adminAccounts));
+        }
+
+        setSyncStatus('synced');
+        setLastSyncTime(new Date());
+        isInitialCloudLoadRef.current = true;
+      }
+    } catch (err) {
+      console.warn('Cloud sync fetch warning:', err);
+      setSyncStatus(navigator.onLine ? 'error' : 'offline');
+    } finally {
+      isSyncingRef.current = false;
+    }
+  }, []);
+
+  // Push local state to Cloud Server
+  const pushCloudState = useCallback(async (
+    tenantEmail: string,
+    overrideData?: {
+      products?: Product[];
+      stockMovements?: StockMovement[];
+      sales?: Sale[];
+      clinicSettings?: ClinicSettings;
+      userProfile?: UserProfile;
+      adminAccounts?: AdminAccount[];
+    }
+  ) => {
+    if (!navigator.onLine) {
+      setSyncStatus('offline');
+      return;
+    }
+
+    try {
+      setSyncStatus('syncing');
+
+      const payload = {
+        tenantEmail,
+        products: overrideData?.products ?? products,
+        stockMovements: overrideData?.stockMovements ?? stockMovements,
+        sales: overrideData?.sales ?? sales,
+        clinicSettings: overrideData?.clinicSettings ?? clinicSettings,
+        userProfile: overrideData?.userProfile ?? userProfile,
+        adminAccounts: overrideData?.adminAccounts ?? adminAccounts,
+      };
+
+      const response = await fetch('/api/sync/state', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error(`HTTP push error ${response.status}`);
+      const resData = await response.json();
+      if (resData.success) {
+        lastServerTimestampRef.current = resData.serverTime || Date.now();
+        setSyncStatus('synced');
+        setLastSyncTime(new Date());
+      }
+    } catch (err) {
+      console.warn('Cloud sync push warning:', err);
+      setSyncStatus(navigator.onLine ? 'error' : 'offline');
+    }
+  }, [products, stockMovements, sales, clinicSettings, userProfile, adminAccounts]);
+
+  // Manual Trigger for Full Sync
+  const syncWithCloud = useCallback(async () => {
+    setSyncStatus('syncing');
+    showToast('Sincronizando datos con la nube y otros dispositivos...', 'info');
+    await fetchCloudState(activeTenantEmail, false);
+    await pushCloudState(activeTenantEmail);
+    showToast('Base de datos sincronizada en todos los dispositivos', 'success');
+  }, [activeTenantEmail, fetchCloudState, pushCloudState, showToast]);
+
+  // Initial cloud state sync on mount or tenant switch
+  useEffect(() => {
+    fetchCloudState(activeTenantEmail, false);
+  }, [activeTenantEmail, fetchCloudState]);
+
+  // Auto-sync debounced trigger whenever state changes
+  useEffect(() => {
+    if (!isInitialCloudLoadRef.current) return;
+    const timer = setTimeout(() => {
+      pushCloudState(activeTenantEmail);
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [products, stockMovements, sales, clinicSettings, userProfile, adminAccounts, activeTenantEmail, pushCloudState]);
+
+  // Real-time polling across devices every 3.5s
+  useEffect(() => {
+    const pollInterval = setInterval(async () => {
+      if (!navigator.onLine || document.hidden || isSyncingRef.current) return;
+
+      try {
+        const url = `/api/sync/poll?tenant=${encodeURIComponent(activeTenantEmail)}&since=${lastServerTimestampRef.current}`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const pollData = await res.json();
+          if (pollData.hasNewData) {
+            // New changes detected from another device/browser
+            await fetchCloudState(activeTenantEmail, true);
+          }
+        }
+      } catch {
+        // Ignore background polling errors
+      }
+    }, 3500);
+
+    return () => clearInterval(pollInterval);
+  }, [activeTenantEmail, fetchCloudState]);
+
+  // Sync on window focus or coming back online
+  useEffect(() => {
+    const handleFocus = () => {
+      if (navigator.onLine) {
+        fetchCloudState(activeTenantEmail, true);
+      }
+    };
+    const handleOnline = () => {
+      setSyncStatus('syncing');
+      fetchCloudState(activeTenantEmail, false);
+    };
+    const handleOffline = () => {
+      setSyncStatus('offline');
+    };
+
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [activeTenantEmail, fetchCloudState]);
 
   // Modals state
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -1087,6 +1292,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         lowStockProducts,
         expiringProducts,
         totalAlertsCount,
+        syncStatus,
+        lastSyncTime,
+        syncWithCloud,
         toastMessage,
         toastType,
         showToast,

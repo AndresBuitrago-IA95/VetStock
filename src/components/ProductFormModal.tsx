@@ -351,10 +351,10 @@ export const ProductFormModal: React.FC = () => {
                     <input
                       id="input-product-purchase-price"
                       type="number"
+                      step="any"
                       min="0"
-                      step="500"
                       required
-                      placeholder="68.000"
+                      placeholder="Sin límite (ej. 68000)"
                       value={purchasePrice}
                       onChange={(e) => setPurchasePrice(e.target.value === '' ? '' : Number(e.target.value))}
                       className="w-full pl-8 pr-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
@@ -372,10 +372,10 @@ export const ProductFormModal: React.FC = () => {
                     <input
                       id="input-product-sale-price"
                       type="number"
+                      step="any"
                       min="0"
-                      step="500"
                       required
-                      placeholder="89.000"
+                      placeholder="Sin límite (ej. 89000)"
                       value={salePrice}
                       onChange={(e) => setSalePrice(e.target.value === '' ? '' : Number(e.target.value))}
                       className="w-full pl-8 pr-3.5 py-2.5 bg-white border border-stone-300 rounded-xl text-sm font-semibold text-emerald-800 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
@@ -404,6 +404,7 @@ export const ProductFormModal: React.FC = () => {
                 <input
                   id="input-product-stock"
                   type="number"
+                  step="any"
                   min="0"
                   required
                   placeholder="10"
@@ -421,6 +422,7 @@ export const ProductFormModal: React.FC = () => {
                 <input
                   id="input-product-min-stock"
                   type="number"
+                  step="any"
                   min="0"
                   required
                   placeholder="5"

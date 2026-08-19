@@ -11,6 +11,7 @@ import { AlertsView } from './views/AlertsView';
 import { SettingsView } from './views/SettingsView';
 import { AdminLoginView } from './views/AdminLoginView';
 import { AdminManagementView } from './views/AdminManagementView';
+import { MobileBottomNav } from './components/MobileBottomNav';
 import { ProductFormModal } from './components/ProductFormModal';
 import { ProductDetailModal } from './components/ProductDetailModal';
 import { StockEntryModal } from './components/StockEntryModal';
@@ -60,8 +61,8 @@ const MainContent: React.FC = () => {
   }
 
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-stone-50 font-sans text-stone-800">
-      {/* Sidebar Navigation: on desktop, sits naturally as flex column without overlay */}
+    <div className="flex h-[100dvh] w-full overflow-hidden bg-stone-50 font-sans text-stone-800 antialiased">
+      {/* Sidebar Navigation: on desktop static column, on mobile clean sliding drawer */}
       <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
 
       {/* Main App Layout */}
@@ -69,9 +70,9 @@ const MainContent: React.FC = () => {
         {/* Top Header */}
         <Header onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)} />
 
-        {/* Scrollable View Container */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-stone-50">
-          <div className="max-w-7xl mx-auto pb-12">
+        {/* Scrollable View Container with safe bottom padding for iOS and mobile tab bar */}
+        <main className="flex-1 overflow-y-auto p-3.5 sm:p-6 lg:p-8 bg-stone-50 pb-24 lg:pb-8">
+          <div className="max-w-7xl mx-auto">
             {activeTab === 'dashboard' && <DashboardView />}
             {activeTab === 'inventory' && <InventoryView />}
             {activeTab === 'sales' && <SalesView />}
@@ -83,6 +84,12 @@ const MainContent: React.FC = () => {
             {activeTab === 'settings' && <SettingsView />}
           </div>
         </main>
+
+        {/* Native iOS/Mobile Bottom Navigation Bar */}
+        <MobileBottomNav 
+          onToggleSidebar={() => setIsSidebarOpen((prev) => !prev)}
+          isSidebarOpen={isSidebarOpen}
+        />
       </div>
 
       {/* Global Business Modals */}

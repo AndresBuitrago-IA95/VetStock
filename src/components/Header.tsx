@@ -12,7 +12,11 @@ import {
   Building2,
   Sparkles,
   LogOut,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCw,
+  Cloud,
+  CloudOff,
+  Wifi
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { GoogleLogo } from '../views/AdminLoginView';
@@ -37,6 +41,9 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
     totalAlertsCount,
     setSelectedProductId,
     setIsDetailModalOpen,
+    syncStatus,
+    lastSyncTime,
+    syncWithCloud,
   } = useApp();
 
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -121,17 +128,72 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
         </div>
       </div>
 
-      {/* Right section: Action buttons + Notifications + User */}
-      <div className="flex items-center gap-2.5">
+      {/* Right section: Cloud Sync Badge + Action buttons + Notifications + User */}
+      <div className="flex items-center gap-2 sm:gap-2.5">
+        {/* Real-time Cloud Sync & Connectivity Indicator */}
+        <div 
+          id="cloud-sync-status-badge"
+          title={
+            syncStatus === 'synced'
+              ? `Sincronizado en tiempo real. Última sincronización: ${lastSyncTime ? lastSyncTime.toLocaleTimeString() : 'Reciente'}`
+              : syncStatus === 'syncing'
+              ? 'Sincronizando cambios con la nube y otros dispositivos...'
+              : 'Modo sin conexión a internet'
+          }
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-semibold transition-all bg-white border-stone-200 shadow-2xs cursor-pointer"
+          onClick={() => syncWithCloud()}
+        >
+          {syncStatus === 'synced' && (
+            <>
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <Cloud className="w-3.5 h-3.5 text-emerald-700 hidden xs:inline" />
+              <span className="text-[11px] font-bold text-stone-700 hidden md:inline">
+                Nube Sincronizada
+              </span>
+            </>
+          )}
+
+          {syncStatus === 'syncing' && (
+            <>
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-700 animate-spin" />
+              <span className="text-[11px] font-bold text-emerald-800 hidden md:inline">
+                Sincronizando...
+              </span>
+            </>
+          )}
+
+          {(syncStatus === 'offline' || syncStatus === 'error') && (
+            <>
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
+              <CloudOff className="w-3.5 h-3.5 text-amber-600" />
+              <span className="text-[11px] font-bold text-amber-800 hidden md:inline">
+                Modo Local
+              </span>
+            </>
+          )}
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              syncWithCloud();
+            }}
+            title="Forzar sincronización inmediata con otros dispositivos"
+            className="p-0.5 text-stone-400 hover:text-emerald-700 transition-colors ml-0.5"
+          >
+            <RefreshCw className={`w-3 h-3 ${syncStatus === 'syncing' ? 'animate-spin text-emerald-700' : ''}`} />
+          </button>
+        </div>
+
         {/* Quick action: New Product */}
         <button
           id="header-new-product-btn"
           type="button"
           onClick={handleOpenNewProduct}
-          className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 bg-white hover:bg-stone-50 border border-stone-300 hover:border-stone-400 text-stone-700 text-xs font-bold rounded-xl transition-all shadow-2xs"
+          className="hidden md:flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-stone-50 border border-stone-300 hover:border-stone-400 text-stone-700 text-xs font-bold rounded-xl transition-all shadow-2xs"
         >
           <PackagePlus className="w-4 h-4 text-emerald-700" />
-          <span>+ Registrar producto</span>
+          <span>+ Producto</span>
         </button>
 
         {/* Quick action: New Sale */}
@@ -139,11 +201,11 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           id="header-new-sale-btn"
           type="button"
           onClick={() => setActiveTab('sales')}
-          className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white text-xs font-bold rounded-xl transition-all shadow-sm shadow-emerald-700/20"
+          className="flex items-center gap-1.5 px-3 py-2 bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white text-xs font-bold rounded-xl transition-all shadow-sm shadow-emerald-700/20"
         >
           <ShoppingCart className="w-4 h-4" />
-          <span className="hidden xs:inline">+ Nueva venta</span>
-          <span className="xs:hidden">Vender</span>
+          <span className="hidden sm:inline">+ Vender</span>
+          <span className="sm:hidden">POS</span>
         </button>
 
         {/* Notifications Bell with Dropdown */}

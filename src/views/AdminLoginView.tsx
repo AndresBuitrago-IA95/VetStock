@@ -3,17 +3,12 @@ import {
   ShieldCheck, 
   Lock, 
   Boxes, 
-  ArrowRight, 
-  Sparkles, 
   CheckCircle2, 
   AlertCircle, 
   KeyRound, 
-  Crown, 
-  UserCheck,
   Eye,
   EyeOff,
-  RefreshCw,
-  HelpCircle
+  Mail
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { SUPER_ADMIN_EMAIL } from '../data/mockData';
@@ -43,8 +38,8 @@ export const GoogleLogo: React.FC<{ className?: string }> = ({ className = 'w-5 
 export const AdminLoginView: React.FC = () => {
   const { loginWithGoogle, clinicSettings, adminAccounts } = useApp();
   
-  // Login form state
-  const [selectedEmail, setSelectedEmail] = useState<string>(SUPER_ADMIN_EMAIL);
+  // Login form state - clean and without prefilled credentials
+  const [selectedEmail, setSelectedEmail] = useState<string>('');
   const [securityPin, setSecurityPin] = useState<string>('');
   const [showPin, setShowPin] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -100,14 +95,14 @@ export const AdminLoginView: React.FC = () => {
   }, []);
 
   // Submit handler for Email + PIN verification
-  const handlePinLogin = async (e: React.FormEvent) => {
+  const handlePinLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
     setAuthSuccessMsg(null);
 
     const cleanEmail = selectedEmail.trim().toLowerCase();
     if (!cleanEmail) {
-      setAuthError('Por favor ingresa un correo de Google válido.');
+      setAuthError('Por favor ingresa un correo electrónico autorizado.');
       return;
     }
 
@@ -117,13 +112,13 @@ export const AdminLoginView: React.FC = () => {
     }
 
     setIsLoading(true);
-    try {
+    setTimeout(() => {
       const matchedAccount = adminAccounts.find(
         (a) => a.email.toLowerCase() === cleanEmail
       );
       const nameToUse = matchedAccount?.name || (cleanEmail === superAdminEmail.toLowerCase() ? superAdminName : 'Administrador');
 
-      const result = await loginWithGoogle(
+      const result = loginWithGoogle(
         cleanEmail, 
         nameToUse, 
         matchedAccount?.avatarUrl, 
@@ -135,11 +130,8 @@ export const AdminLoginView: React.FC = () => {
       } else {
         setAuthSuccessMsg(result.message);
       }
-    } catch (err: any) {
-      setAuthError(err?.message || 'Error al validar credenciales');
-    } finally {
       setIsLoading(false);
-    }
+    }, 450);
   };
 
   // Google OAuth Popup Flow simulation & GSI invocation
@@ -161,7 +153,7 @@ export const AdminLoginView: React.FC = () => {
               });
               const userData = await res.json();
               if (userData?.email) {
-                const loginRes = await loginWithGoogle(
+                const loginRes = loginWithGoogle(
                   userData.email,
                   userData.name,
                   userData.picture,
@@ -185,53 +177,49 @@ export const AdminLoginView: React.FC = () => {
         setIsLoading(false);
         setAuthMode('email_pin');
         setAuthError(
-          'Para validar tu cuenta Google sin credenciales OAuth externas en este entorno, utiliza la Verificación Segura con PIN / Clave Maestra.'
+          'Ingresa tu correo autorizado y tu PIN de seguridad asignado para acceder.'
         );
       }, 500);
     }
   };
 
-  const isSelectedSuper = selectedEmail.trim().toLowerCase() === superAdminEmail.toLowerCase();
-
   return (
-    <div className="min-h-dvh w-full bg-stone-100 flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans text-stone-800">
-      <div className="max-w-lg w-full bg-white rounded-3xl shadow-xl border border-stone-200/90 overflow-hidden">
+    <div className="min-h-screen w-screen bg-stone-100 flex items-center justify-center p-4 sm:p-6 lg:p-8 font-sans text-stone-800">
+      <div className="max-w-md w-full bg-white rounded-3xl shadow-xl border border-stone-200/90 overflow-hidden">
         
         {/* Top Header Banner */}
-        <div className="bg-stone-900 text-stone-100 p-6 sm:p-8 relative overflow-hidden">
+        <div className="bg-stone-900 text-stone-100 p-6 sm:p-7 relative overflow-hidden text-center">
           <div className="absolute top-0 right-0 translate-x-8 -translate-y-8 w-40 h-40 bg-emerald-700/20 rounded-full blur-2xl pointer-events-none" />
           
-          <div className="flex items-center gap-3.5 mb-4">
+          <div className="flex flex-col items-center gap-2 mb-3">
             <div className="w-12 h-12 rounded-2xl bg-emerald-700 flex items-center justify-center text-white shadow-lg shadow-emerald-950/40">
-              <Boxes className="w-7 h-7" />
+              <Boxes className="w-6 h-6" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white">
-                  StockPro
-                </h1>
-                <span className="text-[10px] font-extrabold tracking-widest px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full uppercase">
-                  Acceso Seguro
-                </span>
-              </div>
-              <p className="text-xs text-stone-400 font-medium">
-                {clinicSettings.name || 'Gestión de Inventario'} • Autenticación Administrativa
-              </p>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white">
+                StockPro
+              </h1>
+              <span className="text-[10px] font-extrabold tracking-widest px-2 py-0.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-full uppercase">
+                Privado
+              </span>
             </div>
+            <p className="text-xs text-stone-400 font-medium">
+              {clinicSettings.name || 'Gestión de Inventario y Ventas'}
+            </p>
           </div>
 
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-stone-800/90 border border-stone-700/80 text-xs font-semibold text-stone-300">
-            <Lock className="w-3.5 h-3.5 text-amber-400" />
-            <span>Validación de Identidad y Cuentas Google Autorizadas</span>
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-xl bg-stone-800/90 border border-stone-700/80 text-[11px] font-semibold text-stone-300">
+            <Lock className="w-3 h-3 text-amber-400" />
+            <span>Acceso Administrativo Seguro</span>
           </div>
         </div>
 
         {/* Body Content */}
-        <div className="p-6 sm:p-8 space-y-6">
+        <div className="p-6 sm:p-7 space-y-5">
           
           {/* Auth Error Banner */}
           {authError && (
-            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 flex items-start gap-2.5 animate-in fade-in">
+            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 flex items-start gap-2.5 animate-in fade-in">
               <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
               <div>
                 <p className="font-bold">Error de Validación</p>
@@ -242,7 +230,7 @@ export const AdminLoginView: React.FC = () => {
 
           {/* Auth Success Banner */}
           {authSuccessMsg && (
-            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-800 flex items-start gap-2.5 animate-in fade-in">
+            <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-800 flex items-start gap-2.5 animate-in fade-in">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
               <div>
                 <p className="font-bold">Acceso Autorizado</p>
@@ -263,7 +251,7 @@ export const AdminLoginView: React.FC = () => {
               }`}
             >
               <KeyRound className="w-3.5 h-3.5 text-emerald-700" />
-              <span>Verificación con PIN</span>
+              <span>Ingreso con PIN</span>
             </button>
 
             <button
@@ -276,7 +264,7 @@ export const AdminLoginView: React.FC = () => {
               }`}
             >
               <GoogleLogo className="w-3.5 h-3.5" />
-              <span>Google Identity (GIS)</span>
+              <span>Cuenta Google</span>
             </button>
           </div>
 
@@ -284,111 +272,56 @@ export const AdminLoginView: React.FC = () => {
           {authMode === 'email_pin' && (
             <form onSubmit={handlePinLogin} className="space-y-4">
               
-              {/* Account selection / input */}
+              {/* Account Email input */}
               <div>
-                <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
-                  Correo de Google Autorizado *
+                <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                  <Mail className="w-3.5 h-3.5 text-stone-400" />
+                  Correo Electrónico *
                 </label>
-                <div className="relative">
-                  <input
-                    type="email"
-                    required
-                    value={selectedEmail}
-                    onChange={(e) => setSelectedEmail(e.target.value)}
-                    placeholder="ejemplo@gmail.com"
-                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-semibold text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
-                  />
-                  {isSelectedSuper && (
-                    <span className="absolute right-3 top-2.5 px-2 py-0.5 bg-amber-100 text-amber-900 text-[10px] font-bold rounded-md flex items-center gap-1 border border-amber-200">
-                      <Crown className="w-3 h-3 text-amber-600" /> SuperAdmin
-                    </span>
-                  )}
-                </div>
-
-                {/* Quick Account Selectors */}
-                {adminAccounts.length > 0 && (
-                  <div className="mt-2.5">
-                    <p className="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1">
-                      Cuentas Registradas en el Sistema:
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {adminAccounts.map((acc) => (
-                        <button
-                          key={acc.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedEmail(acc.email);
-                            if (acc.securityPin) {
-                              setSecurityPin(acc.securityPin);
-                            }
-                          }}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all text-left flex items-center gap-1.5 cursor-pointer ${
-                            selectedEmail.toLowerCase() === acc.email.toLowerCase()
-                              ? 'bg-emerald-50 border-emerald-300 text-emerald-900 font-bold'
-                              : 'bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100'
-                          }`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full ${acc.role === 'SuperAdmin' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                          <span className="truncate max-w-[140px] sm:max-w-[180px]">{acc.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <input
+                  type="email"
+                  required
+                  autoFocus
+                  value={selectedEmail}
+                  onChange={(e) => setSelectedEmail(e.target.value)}
+                  placeholder="ejemplo@gmail.com"
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-medium text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700 placeholder:text-stone-400"
+                />
               </div>
 
               {/* Security PIN input */}
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold text-stone-700 uppercase tracking-wider flex items-center gap-1">
-                    <Lock className="w-3.5 h-3.5 text-stone-500" />
-                    PIN o Clave de Seguridad *
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setSecurityPin('8282')}
-                    className="text-[10px] text-emerald-700 hover:text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 cursor-pointer"
-                  >
-                    PIN Inicial: 8282
-                  </button>
-                </div>
+                <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                  <Lock className="w-3.5 h-3.5 text-stone-400" />
+                  PIN de Seguridad *
+                </label>
                 
                 <div className="relative">
                   <input
                     type={showPin ? 'text' : 'password'}
                     required
+                    minLength={4}
+                    maxLength={8}
                     value={securityPin}
-                    onChange={(e) => setSecurityPin(e.target.value)}
-                    placeholder="Ingresa tu PIN de acceso"
-                    autoComplete="off"
-                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono font-bold text-stone-900 tracking-wider focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+                    onChange={(e) => setSecurityPin(e.target.value.replace(/\s+/g, ''))}
+                    placeholder="••••"
+                    className="w-full pl-3.5 pr-10 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono font-bold text-stone-900 tracking-widest focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700 placeholder:text-stone-300"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPin(!showPin)}
                     className="absolute right-3 top-2.5 text-stone-400 hover:text-stone-600 cursor-pointer"
+                    title={showPin ? 'Ocultar PIN' : 'Ver PIN'}
                   >
                     {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
 
-              {isSelectedSuper && (
-                <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl flex items-center gap-2 text-xs">
-                  <div className="w-7 h-7 rounded-lg bg-amber-500 text-white flex items-center justify-center shrink-0">
-                    <Crown className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <p className="font-bold text-amber-950">SuperAdmin Maestro</p>
-                    <p className="text-[11px] text-amber-800/80 font-mono">{superAdminEmail}</p>
-                  </div>
-                </div>
-              )}
-
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full py-3 px-4 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white font-bold rounded-2xl shadow-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer text-xs sm:text-sm"
+                className="w-full py-3 px-4 bg-emerald-700 hover:bg-emerald-800 active:scale-[0.99] text-white font-bold rounded-2xl shadow-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50 cursor-pointer text-xs sm:text-sm mt-2"
               >
                 {isLoading ? (
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -403,12 +336,12 @@ export const AdminLoginView: React.FC = () => {
           {/* MODE 2: Google Identity Services (GIS) */}
           {authMode === 'google_oauth' && (
             <div className="space-y-4">
-              <div className="p-4 bg-stone-50 border border-stone-200 rounded-2xl space-y-2 text-xs text-stone-600">
+              <div className="p-3.5 bg-stone-50 border border-stone-200 rounded-2xl space-y-1.5 text-xs text-stone-600">
                 <p className="font-bold text-stone-800 flex items-center gap-1.5">
-                  <GoogleLogo className="w-4 h-4" /> Autenticación Directa Google Identity Services
+                  <GoogleLogo className="w-4 h-4" /> Autenticación Directa de Google
                 </p>
                 <p className="leading-relaxed text-[11px]">
-                  Al iniciar sesión, el sistema valida que tu cuenta de Google pertenezca a la lista de administradores autorizados por el SuperAdmin ({superAdminEmail}).
+                  Al iniciar sesión, el sistema valida automáticamente si tu cuenta pertenece a los administradores autorizados.
                 </p>
               </div>
 
@@ -433,31 +366,23 @@ export const AdminLoginView: React.FC = () => {
           )}
 
           {/* Security Summary */}
-          <div className="pt-3 border-t border-stone-100 grid grid-cols-2 gap-2 text-[11px] text-stone-500">
+          <div className="pt-2 border-t border-stone-100 grid grid-cols-2 gap-2 text-[11px] text-stone-500">
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              <span>Validación Criptográfica</span>
+              <span>Acceso Criptográfico</span>
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
               <span>Base de Datos Aislada</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              <span>Protección Anti-Bypass</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700 shrink-0" />
-              <span>SuperAdmin Maestro</span>
             </div>
           </div>
 
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-stone-50 border-t border-stone-200/80 text-center">
+        <div className="p-3.5 bg-stone-50 border-t border-stone-200/80 text-center">
           <p className="text-[11px] text-stone-400 font-medium">
-            StockPro • Sistema de Inventario y Ventas Privado
+            StockPro • Sistema Privado de Inventario
           </p>
         </div>
 

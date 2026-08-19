@@ -270,8 +270,9 @@ export const SaleEditModal: React.FC<SaleEditModalProps> = ({
               </label>
               <input
                 type="number"
+                step="any"
                 min="0"
-                step="500"
+                placeholder="0"
                 value={discount}
                 onChange={(e) => setDiscount(e.target.value === '' ? '' : Number(e.target.value))}
                 className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-semibold text-stone-900 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"

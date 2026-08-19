@@ -18,18 +18,15 @@ import {
   Database,
   ExternalLink,
   Sparkles,
-  RefreshCw,
   Eye,
-  EyeOff
+  EyeOff,
+  RefreshCw,
+  Key
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { AdminAccount, AdminRole, AdminPermissions } from '../types';
 import { SUPER_ADMIN_EMAIL } from '../data/mockData';
 import { formatDate, formatCOP } from '../utils/formatters';
-
-// Generates a random 6-digit PIN so a new/edited account is never left
-// without one (an unset PIN used to silently accept a guessable default).
-const generateRandomPin = (): string => String(Math.floor(100000 + Math.random() * 900000));
 
 export const AdminManagementView: React.FC = () => {
   const { 
@@ -52,14 +49,19 @@ export const AdminManagementView: React.FC = () => {
   const [editingAdmin, setEditingAdmin] = useState<AdminAccount | null>(null);
   const [adminToDelete, setAdminToDelete] = useState<AdminAccount | null>(null);
 
+  // Quick PIN modal state
+  const [quickPinModalAdmin, setQuickPinModalAdmin] = useState<AdminAccount | null>(null);
+  const [quickPinValue, setQuickPinValue] = useState<string>('');
+  const [showQuickPin, setShowQuickPin] = useState<boolean>(false);
+
   // Form states
   const [formName, setFormName] = useState('');
   const [formEmail, setFormEmail] = useState('');
   const [formPhone, setFormPhone] = useState('');
   const [formRole, setFormRole] = useState<AdminRole>('Administrador');
-  const [formNotes, setFormNotes] = useState('');
-  const [formSecurityPin, setFormSecurityPin] = useState('');
+  const [formPin, setFormPin] = useState('');
   const [showFormPin, setShowFormPin] = useState(false);
+  const [formNotes, setFormNotes] = useState('');
   const [formPermissions, setFormPermissions] = useState<AdminPermissions>({
     canManageAdmins: false,
     canEditInventory: true,
@@ -69,16 +71,19 @@ export const AdminManagementView: React.FC = () => {
     canDeleteProducts: false,
   });
 
+  const generateRandomPin = () => {
+    return Math.floor(1000 + Math.random() * 9000).toString();
+  };
+
   const openCreateModal = () => {
     setEditingAdmin(null);
     setFormName('');
     setFormEmail('');
     setFormPhone('');
     setFormRole('Administrador');
+    setFormPin(generateRandomPin());
+    setShowFormPin(false);
     setFormNotes('');
-    // Auto-generate a real PIN up front so no account is ever created blank.
-    setFormSecurityPin(generateRandomPin());
-    setShowFormPin(true);
     setFormPermissions({
       canManageAdmins: false,
       canEditInventory: true,
@@ -96,9 +101,9 @@ export const AdminManagementView: React.FC = () => {
     setFormEmail(admin.email);
     setFormPhone(admin.phone || '');
     setFormRole(admin.role);
-    setFormNotes(admin.notes || '');
-    setFormSecurityPin(admin.securityPin || '');
+    setFormPin(admin.securityPin || '');
     setShowFormPin(false);
+    setFormNotes(admin.notes || '');
     setFormPermissions(admin.permissions || {
       canManageAdmins: admin.role === 'SuperAdmin',
       canEditInventory: true,
@@ -108,6 +113,24 @@ export const AdminManagementView: React.FC = () => {
       canDeleteProducts: true,
     });
     setIsCreateModalOpen(true);
+  };
+
+  const openQuickPinModal = (admin: AdminAccount) => {
+    setQuickPinModalAdmin(admin);
+    setQuickPinValue(admin.securityPin || '1234');
+    setShowQuickPin(false);
+  };
+
+  const handleSaveQuickPin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickPinModalAdmin) return;
+    const cleanPin = quickPinValue.trim();
+    if (!cleanPin || cleanPin.length < 4) return;
+
+    updateAdminAccount(quickPinModalAdmin.id, {
+      securityPin: cleanPin,
+    });
+    setQuickPinModalAdmin(null);
   };
 
   const handleRoleChange = (role: AdminRole) => {
@@ -163,7 +186,8 @@ export const AdminManagementView: React.FC = () => {
   const handleSaveAdmin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formEmail.trim() || !formName.trim()) return;
-    if (!formSecurityPin.trim()) return;
+
+    const cleanPin = formPin.trim();
 
     if (editingAdmin) {
       updateAdminAccount(editingAdmin.id, {
@@ -171,9 +195,9 @@ export const AdminManagementView: React.FC = () => {
         email: formEmail.trim().toLowerCase(),
         phone: formPhone.trim() || undefined,
         role: formRole,
+        securityPin: cleanPin || undefined,
         notes: formNotes.trim() || undefined,
         permissions: formPermissions,
-        securityPin: formSecurityPin.trim(),
       });
     } else {
       addAdminAccount({
@@ -181,10 +205,10 @@ export const AdminManagementView: React.FC = () => {
         email: formEmail.trim().toLowerCase(),
         phone: formPhone.trim() || undefined,
         role: formRole,
+        securityPin: cleanPin || '1234',
         status: 'activo',
         notes: formNotes.trim() || undefined,
         permissions: formPermissions,
-        securityPin: formSecurityPin.trim(),
         avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(formName)}&background=047857&color=fff`,
       });
     }
@@ -333,6 +357,7 @@ export const AdminManagementView: React.FC = () => {
               <tr>
                 <th className="py-3.5 px-4">Usuario / Cuenta Google</th>
                 <th className="py-3.5 px-3">Rol</th>
+                <th className="py-3.5 px-3">PIN de Acceso</th>
                 <th className="py-3.5 px-3">Base de Datos Independiente</th>
                 <th className="py-3.5 px-3">Estado</th>
                 <th className="py-3.5 px-3">Último Acceso</th>
@@ -342,7 +367,7 @@ export const AdminManagementView: React.FC = () => {
             <tbody className="divide-y divide-stone-100">
               {filteredAdmins.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-12 text-center text-stone-400 text-xs">
+                  <td colSpan={7} className="py-12 text-center text-stone-400 text-xs">
                     No se encontraron administradores con los criterios de búsqueda.
                   </td>
                 </tr>
@@ -351,6 +376,7 @@ export const AdminManagementView: React.FC = () => {
                   const isAccountSuper = admin.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
                   const isCurrentActive = activeTenantEmail.toLowerCase() === admin.email.toLowerCase();
                   const stats = getAdminDatabaseStats(admin.email);
+                  const pinToDisplay = admin.securityPin || (isAccountSuper ? '8282' : '1234');
 
                   return (
                     <tr 
@@ -414,6 +440,21 @@ export const AdminManagementView: React.FC = () => {
                         </span>
                       </td>
 
+                      {/* PIN de Acceso */}
+                      <td className="py-3.5 px-3 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => openQuickPinModal(admin)}
+                            className="group flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 hover:bg-emerald-50 text-stone-700 hover:text-emerald-900 border border-stone-200 hover:border-emerald-300 rounded-lg text-xs font-mono font-bold transition-colors cursor-pointer shadow-2xs"
+                            title="Haz clic para ver o cambiar el PIN de acceso"
+                          >
+                            <Key className="w-3 h-3 text-stone-400 group-hover:text-emerald-600" />
+                            <span>{pinToDisplay}</span>
+                          </button>
+                        </div>
+                      </td>
+
                       {/* Independent Database Metrics */}
                       <td className="py-3.5 px-3">
                         <div className="flex items-center gap-2">
@@ -468,6 +509,15 @@ export const AdminManagementView: React.FC = () => {
                         <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
+                            onClick={() => openQuickPinModal(admin)}
+                            className="p-1.5 text-stone-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                            title="Cambiar PIN de acceso"
+                          >
+                            <KeyRound className="w-4 h-4" />
+                          </button>
+
+                          <button
+                            type="button"
                             onClick={() => openEditModal(admin)}
                             className="p-1.5 text-stone-500 hover:text-stone-800 hover:bg-stone-100 rounded-lg transition-colors cursor-pointer"
                             title="Editar permisos"
@@ -499,7 +549,7 @@ export const AdminManagementView: React.FC = () => {
       {/* Modal: Create or Edit Admin */}
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[92dvh] flex flex-col shadow-2xl border border-stone-200 overflow-hidden">
+          <div className="bg-white rounded-3xl max-w-lg w-full max-h-[92vh] flex flex-col shadow-2xl border border-stone-200 overflow-hidden">
             
             <div className="p-5 sm:p-6 border-b border-stone-200 flex items-center justify-between bg-stone-50/80">
               <div>
@@ -586,6 +636,51 @@ export const AdminManagementView: React.FC = () => {
                 </div>
               </div>
 
+              {/* PIN de Acceso / Clave de Seguridad */}
+              <div className="bg-emerald-50/60 border border-emerald-200/80 rounded-2xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-bold text-emerald-950 uppercase tracking-wider flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5 text-emerald-700" />
+                    PIN de Acceso al Sistema *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormPin(generateRandomPin())}
+                    className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 hover:underline cursor-pointer"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    Generar PIN aleatorio
+                  </button>
+                </div>
+
+                <div className="relative flex items-center">
+                  <input
+                    type={showFormPin ? 'text' : 'password'}
+                    required
+                    minLength={4}
+                    maxLength={8}
+                    value={formPin}
+                    onChange={(e) => setFormPin(e.target.value.replace(/\s+/g, ''))}
+                    placeholder="Ej: 4892"
+                    className="w-full pl-3.5 pr-20 py-2.5 bg-white border border-emerald-300 rounded-xl text-sm font-mono font-bold text-emerald-950 tracking-widest focus:outline-none focus:ring-2 focus:ring-emerald-600/30"
+                  />
+                  <div className="absolute right-2 flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowFormPin((prev) => !prev)}
+                      className="p-1.5 text-stone-500 hover:text-stone-800 rounded-lg hover:bg-stone-100 cursor-pointer"
+                      title={showFormPin ? 'Ocultar PIN' : 'Ver PIN'}
+                    >
+                      {showFormPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-emerald-800/90 leading-tight">
+                  Este PIN de 4 a 6 dígitos le permite al usuario iniciar sesión rápidamente en móviles o navegadores sin contraseñas complejas.
+                </p>
+              </div>
+
               {/* Permisos */}
               <div className="pt-3 border-t border-stone-100">
                 <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-2">
@@ -642,43 +737,6 @@ export const AdminManagementView: React.FC = () => {
                     <span>Eliminar Productos</span>
                   </label>
                 </div>
-              </div>
-
-              <div className="pt-3 border-t border-stone-100">
-                <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
-                  PIN / Clave de Seguridad *
-                </label>
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <input
-                      type={showFormPin ? 'text' : 'password'}
-                      required
-                      value={formSecurityPin}
-                      onChange={(e) => setFormSecurityPin(e.target.value)}
-                      placeholder="PIN de acceso para esta cuenta"
-                      autoComplete="off"
-                      className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono font-bold tracking-wider focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowFormPin(!showFormPin)}
-                      className="absolute right-3 top-2.5 text-stone-400 hover:text-stone-600 cursor-pointer"
-                    >
-                      {showFormPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => { setFormSecurityPin(generateRandomPin()); setShowFormPin(true); }}
-                    className="p-2.5 bg-stone-100 hover:bg-emerald-100 text-stone-600 hover:text-emerald-800 rounded-xl transition-colors cursor-pointer shrink-0"
-                    title="Generar un nuevo PIN aleatorio"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                </div>
-                <p className="text-[11px] text-stone-500 mt-1">
-                  Comparte este PIN de forma segura con la persona; lo necesitará junto a su correo para iniciar sesión.
-                </p>
               </div>
 
               <div>
@@ -751,6 +809,82 @@ export const AdminManagementView: React.FC = () => {
                 Sí, Eliminar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Quick PIN Change Modal */}
+      {quickPinModalAdmin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-stone-200 space-y-4">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto">
+              <KeyRound className="w-6 h-6" />
+            </div>
+
+            <div className="text-center">
+              <h3 className="text-base font-extrabold text-stone-900">
+                Cambiar PIN de Acceso
+              </h3>
+              <p className="text-xs text-stone-500 mt-1">
+                Asigna un nuevo PIN para <strong>{quickPinModalAdmin.name}</strong> ({quickPinModalAdmin.email})
+              </p>
+            </div>
+
+            <form onSubmit={handleSaveQuickPin} className="space-y-4 pt-2">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-bold text-stone-700 uppercase tracking-wider">
+                    Nuevo PIN (4 a 6 dígitos)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setQuickPinValue(generateRandomPin())}
+                    className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 flex items-center gap-1 hover:underline cursor-pointer"
+                  >
+                    <Sparkles className="w-2.5 h-2.5" />
+                    Aleatorio
+                  </button>
+                </div>
+
+                <div className="relative flex items-center">
+                  <input
+                    type={showQuickPin ? 'text' : 'password'}
+                    required
+                    minLength={4}
+                    maxLength={8}
+                    autoFocus
+                    value={quickPinValue}
+                    onChange={(e) => setQuickPinValue(e.target.value.replace(/\s+/g, ''))}
+                    placeholder="Ej: 1234"
+                    className="w-full pl-3.5 pr-12 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-center text-lg font-mono font-extrabold tracking-widest text-emerald-950 focus:outline-none focus:ring-2 focus:ring-emerald-600/30"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickPin((prev) => !prev)}
+                    className="absolute right-2.5 p-1 text-stone-400 hover:text-stone-700 rounded-lg hover:bg-stone-200 cursor-pointer"
+                    title={showQuickPin ? 'Ocultar PIN' : 'Ver PIN'}
+                  >
+                    {showQuickPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setQuickPinModalAdmin(null)}
+                  className="flex-1 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-xs"
+                >
+                  Guardar PIN
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

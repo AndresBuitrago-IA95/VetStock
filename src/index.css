@@ -1,13 +1,15 @@
 @import "tailwindcss";
 
-/* Extra-small breakpoint (Tailwind v4 has no default `xs:` variant, but the
-   app uses it in a few places to distinguish phones from small tablets). */
-@theme {
-  --breakpoint-xs: 420px;
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 16px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 16px);
+  }
 }
 
-/* Safety net: some fixed-width elements (dropdowns, wide tables) could
-   otherwise force the page to scroll sideways on very narrow phones. */
 html, body {
-  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
 }

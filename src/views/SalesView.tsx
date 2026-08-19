@@ -41,6 +41,11 @@ export const SalesView: React.FC = () => {
   const [customerName, setCustomerName] = useState('');
   const [customerId, setCustomerId] = useState('');
   const [notes, setNotes] = useState('');
+  const cartSectionRef = React.useRef<HTMLDivElement>(null);
+
+  const scrollToCart = () => {
+    cartSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
 
   // Filter available products
   const availableProducts = useMemo(() => {
@@ -350,7 +355,11 @@ export const SalesView: React.FC = () => {
         </div>
 
         {/* RIGHT COLUMN: Interactive Cart & Checkout (5 Cols) */}
-        <div className="lg:col-span-5 bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/80 shadow-xs space-y-5 sticky top-20">
+        <div 
+          ref={cartSectionRef}
+          id="pos-cart-section"
+          className="lg:col-span-5 bg-white rounded-3xl p-5 sm:p-6 border border-stone-200/80 shadow-xs space-y-5 sticky top-20"
+        >
           
           {/* Cart Header */}
           <div className="flex items-center justify-between pb-3 border-b border-stone-100">
@@ -504,9 +513,9 @@ export const SalesView: React.FC = () => {
                 <input
                   id="input-pos-discount"
                   type="number"
+                  step="any"
                   min="0"
-                  step="500"
-                  placeholder="0"
+                  placeholder="0 (Sin límite)"
                   value={discount}
                   onChange={(e) => setDiscount(e.target.value === '' ? '' : Number(e.target.value))}
                   className="w-full pl-7 pr-3 py-1.5 bg-stone-50 border border-stone-200 rounded-xl text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
@@ -552,6 +561,33 @@ export const SalesView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Floating Bottom Bar on Mobile for Quick Cart Access (positioned above mobile tab bar) */}
+      {cart.length > 0 && (
+        <div 
+          id="mobile-floating-cart-bar"
+          className="fixed bottom-18 inset-x-3.5 z-30 lg:hidden bg-stone-900 text-white rounded-2xl p-3 shadow-2xl flex items-center justify-between border border-stone-700 backdrop-blur-md animate-in slide-in-from-bottom duration-200"
+        >
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
+              {totalUnits}
+            </div>
+            <div>
+              <p className="text-[10px] text-stone-400 uppercase font-semibold">Total en Carrito</p>
+              <p className="text-sm font-extrabold text-emerald-400">{formatCOP(total)}</p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={scrollToCart}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-xs font-extrabold rounded-xl transition-all flex items-center gap-1.5 shadow-sm"
+          >
+            <ShoppingCart className="w-3.5 h-3.5" />
+            Ir a Cobrar
+          </button>
+        </div>
+      )}
 
       {/* Sale Receipt Modal (opens immediately on sale) */}
       {lastSaleReceipt && (
