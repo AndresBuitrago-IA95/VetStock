@@ -23,8 +23,6 @@ import {
 } from '../data/mockData';
 import { getProductStatus } from '../utils/formatters';
 import { api } from '../services/api';
-import { auth } from '../lib/firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, signOut, updatePassword } from 'firebase/auth';
 
 export interface DatabaseStats {
   adminEmail: string;
@@ -600,7 +598,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [showToast]);
 
-  // Secure Email + PIN Login via Firebase Auth
+  // Direct PIN Login (Bypassing Firebase Auth for Zero Config)
   const loginWithGoogle = async (
     email = SUPER_ADMIN_EMAIL,
     pin = '8282',
@@ -609,62 +607,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const cleanEmail = email.trim().toLowerCase();
     const cleanSuper = SUPER_ADMIN_EMAIL.toLowerCase();
     const isTargetSuper = cleanEmail === cleanSuper;
-    const firebasePwd = pin + 'STK123'; // Firebase requires 6 chars minimum
-
-    try {
-      // 1. Try standard login with Firebase Auth
-      await signInWithEmailAndPassword(auth, cleanEmail, firebasePwd);
-    } catch (err: any) {
-      // 2. If it fails due to no account or wrong credential, check if they are authorized in Firestore
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-        try {
-          // Sign in anonymously temporarily to check Firestore
-          await signInAnonymously(auth);
-          
-          const serverAdmins = await api.getAdmins();
-          const registeredAccount = serverAdmins.find(a => a.email.toLowerCase() === cleanEmail);
-          
-          let validFirstTime = false;
-          
-          if (isTargetSuper) {
-            // SuperAdmin fallback: First time or PIN match
-            if (pin === '8282' && (!registeredAccount || !registeredAccount.securityPin || registeredAccount.securityPin === '8282')) {
-              validFirstTime = true;
-            } else if (registeredAccount && registeredAccount.securityPin === pin) {
-              validFirstTime = true;
-            }
-          } else if (registeredAccount && registeredAccount.securityPin === pin) {
-            // Regular admin PIN matches the one set by SuperAdmin
-            validFirstTime = true;
-          }
-
-          if (validFirstTime) {
-            // Elevate to real account. This signs out the anonymous user and logs them in.
-            await createUserWithEmailAndPassword(auth, cleanEmail, firebasePwd);
-          } else {
-            // Not authorized or wrong PIN
-            await signOut(auth);
-            return { success: false, message: 'PIN incorrecto o usuario no autorizado.' };
-          }
-        } catch (innerErr: any) {
-          await signOut(auth);
-          console.warn('Fallback login error:', innerErr);
-          if (innerErr.code === 'auth/email-already-in-use') {
-             return { success: false, message: 'El PIN no coincide con tu contraseña registrada. Si lo olvidaste, el SuperAdmin debe eliminar tu cuenta y crearla de nuevo.' };
-          }
-          return { success: false, message: 'Error de validación de seguridad.' };
-        }
-      } else {
-        return { success: false, message: err.message || 'Error de acceso.' };
-      }
-    }
-
-    // --- User is now successfully logged in with Firebase Auth ---
 
     let registeredAccount = adminAccounts.find(
       (acc) => acc.email.trim().toLowerCase() === cleanEmail
     );
-    
+
     try {
       const serverAdmins = await api.getAdmins();
       if (serverAdmins && serverAdmins.length > 0) {
@@ -675,15 +622,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Failed to refresh admins', e);
     }
 
+    // Direct PIN Validation
+    let validPin = false;
+    if (isTargetSuper) {
+      // SuperAdmin fallback: First time or PIN match
+      if (pin === '8282' && (!registeredAccount || !registeredAccount.securityPin || registeredAccount.securityPin === '8282')) {
+        validPin = true;
+      } else if (registeredAccount && registeredAccount.securityPin === pin) {
+        validPin = true;
+      }
+    } else if (registeredAccount && registeredAccount.securityPin === pin) {
+      // Regular admin PIN matches the one set by SuperAdmin
+      validPin = true;
+    }
+
+    if (!validPin) {
+      return { success: false, message: 'PIN incorrecto o correo no autorizado.' };
+    }
+
     if (!isTargetSuper && registeredAccount && registeredAccount.status === 'inactivo') {
-      await signOut(auth);
       const msg = `Acceso denegado: La cuenta para "${email}" se encuentra inactiva.`;
       showToast(msg, 'error');
       return { success: false, message: msg };
     }
 
     if (!isTargetSuper && registeredAccount && registeredAccount.status === 'pendiente') {
-      await signOut(auth);
       const msg = `Acceso pendiente: El SuperAdmin aún no ha autorizado el ingreso para "${email}".`;
       showToast(msg, 'warning');
       return { success: false, message: msg };
