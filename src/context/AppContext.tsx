@@ -297,25 +297,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     prevActiveTenantRef.current = activeTenantEmail;
   });
 
-  // Initial sync with central server for admin accounts
+  // Initial sync and periodic real-time polling with central server
   useEffect(() => {
     let isMounted = true;
-    api.getAdmins().then((serverAdmins) => {
-      if (isMounted && serverAdmins && serverAdmins.length > 0) {
-        setAdminAccounts(serverAdmins);
-        try {
-          localStorage.setItem(GLOBAL_STORAGE_KEYS.ADMIN_ACCOUNTS, JSON.stringify(serverAdmins));
-        } catch (e) {
-          console.warn('LocalStorage save error:', e);
+
+    const fetchServerAdmins = async () => {
+      try {
+        const serverAdmins = await api.getAdmins();
+        if (isMounted && serverAdmins && serverAdmins.length > 0) {
+          setAdminAccounts((prev) => {
+            if (JSON.stringify(prev) !== JSON.stringify(serverAdmins)) {
+              try {
+                localStorage.setItem(GLOBAL_STORAGE_KEYS.ADMIN_ACCOUNTS, JSON.stringify(serverAdmins));
+              } catch (e) {
+                console.warn('LocalStorage save error:', e);
+              }
+              return serverAdmins;
+            }
+            return prev;
+          });
         }
+      } catch (err) {
+        console.warn('Polling server admins error:', err);
       }
-    });
+    };
+
+    // Initial fetch
+    fetchServerAdmins();
+
+    // Poll every 3.5 seconds for cross-device updates
+    const pollInterval = setInterval(fetchServerAdmins, 3500);
+
+    // Also sync immediately when window or tab becomes active
+    const handleFocus = () => {
+      fetchServerAdmins();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
     return () => {
       isMounted = false;
+      clearInterval(pollInterval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
     };
   }, []);
 
-  // Reload isolated data when activeTenantEmail changes (Local cache first, then sync with server)
+  // Reload isolated data when activeTenantEmail changes and periodically poll for active tenant
   useEffect(() => {
     setProducts(loadTenantProducts(activeTenantEmail));
     setStockMovements(loadTenantMovements(activeTenantEmail));
@@ -323,20 +351,74 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setClinicSettings(loadTenantSettings(activeTenantEmail));
     setUserProfile(loadTenantUser(activeTenantEmail));
 
-    // Fetch latest tenant cloud data if available
     let isMounted = true;
-    api.getTenantData(activeTenantEmail).then((cloudData) => {
-      if (isMounted && cloudData) {
-        if (cloudData.products && cloudData.products.length > 0) setProducts(cloudData.products);
-        if (cloudData.movements && cloudData.movements.length > 0) setStockMovements(cloudData.movements);
-        if (cloudData.sales && cloudData.sales.length > 0) setSales(cloudData.sales);
-        if (cloudData.settings) setClinicSettings(cloudData.settings);
-        if (cloudData.user) setUserProfile(cloudData.user);
+
+    const fetchTenantCloudData = async () => {
+      if (!activeTenantEmail) return;
+      try {
+        const cloudData = await api.getTenantData(activeTenantEmail);
+        if (isMounted && cloudData) {
+          if (Array.isArray(cloudData.products)) {
+            setProducts((prev) => {
+              if (JSON.stringify(prev) !== JSON.stringify(cloudData.products)) {
+                return cloudData.products;
+              }
+              return prev;
+            });
+          }
+          if (Array.isArray(cloudData.movements)) {
+            setStockMovements((prev) => {
+              if (JSON.stringify(prev) !== JSON.stringify(cloudData.movements)) {
+                return cloudData.movements;
+              }
+              return prev;
+            });
+          }
+          if (Array.isArray(cloudData.sales)) {
+            setSales((prev) => {
+              if (JSON.stringify(prev) !== JSON.stringify(cloudData.sales)) {
+                return cloudData.sales;
+              }
+              return prev;
+            });
+          }
+          if (cloudData.settings) {
+            setClinicSettings((prev) => {
+              if (JSON.stringify(prev) !== JSON.stringify(cloudData.settings)) {
+                return cloudData.settings;
+              }
+              return prev;
+            });
+          }
+          if (cloudData.user) {
+            setUserProfile((prev) => {
+              if (JSON.stringify(prev) !== JSON.stringify(cloudData.user)) {
+                return cloudData.user;
+              }
+              return prev;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Fetch tenant cloud data error:', err);
       }
-    });
+    };
+
+    fetchTenantCloudData();
+
+    // Poll tenant data every 4 seconds for multi-device sync
+    const tenantInterval = setInterval(fetchTenantCloudData, 4000);
+    const handleFocus = () => {
+      fetchTenantCloudData();
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
 
     return () => {
       isMounted = false;
+      clearInterval(tenantInterval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
     };
   }, [activeTenantEmail]);
 

@@ -95,7 +95,7 @@ export const AdminLoginView: React.FC = () => {
   }, []);
 
   // Submit handler for Email + PIN verification
-  const handlePinLogin = (e: React.FormEvent) => {
+  const handlePinLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
     setAuthSuccessMsg(null);
@@ -112,13 +112,13 @@ export const AdminLoginView: React.FC = () => {
     }
 
     setIsLoading(true);
-    setTimeout(() => {
+    try {
       const matchedAccount = adminAccounts.find(
         (a) => a.email.toLowerCase() === cleanEmail
       );
       const nameToUse = matchedAccount?.name || (cleanEmail === superAdminEmail.toLowerCase() ? superAdminName : 'Administrador');
 
-      const result = loginWithGoogle(
+      const result = await loginWithGoogle(
         cleanEmail, 
         nameToUse, 
         matchedAccount?.avatarUrl, 
@@ -130,8 +130,11 @@ export const AdminLoginView: React.FC = () => {
       } else {
         setAuthSuccessMsg(result.message);
       }
+    } catch (err: any) {
+      setAuthError(err?.message || 'Error al validar credenciales');
+    } finally {
       setIsLoading(false);
-    }, 450);
+    }
   };
 
   // Google OAuth Popup Flow simulation & GSI invocation
