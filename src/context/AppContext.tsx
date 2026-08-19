@@ -23,6 +23,8 @@ import {
 } from '../data/mockData';
 import { getProductStatus } from '../utils/formatters';
 import { api } from '../services/api';
+import { auth } from '../lib/firebase';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, signOut, updatePassword } from 'firebase/auth';
 
 export interface DatabaseStats {
   adminEmail: string;
@@ -598,21 +600,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [showToast]);
 
-  // Google Login logic via Firebase
+  // Secure Email + PIN Login via Firebase Auth
   const loginWithGoogle = async (
     email = SUPER_ADMIN_EMAIL,
-    name = 'Andrés Buitrago',
-    avatarUrl = 'https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c',
-    options?: { isGoogleVerified?: boolean }
+    pin = '8282',
+    avatarUrl = 'https://lh3.googleusercontent.com/a/ACg8ocISz19Wc=s96-c'
   ): Promise<{ success: boolean; message: string }> => {
     const cleanEmail = email.trim().toLowerCase();
+    const cleanSuper = SUPER_ADMIN_EMAIL.toLowerCase();
+    const isTargetSuper = cleanEmail === cleanSuper;
+    const firebasePwd = pin + 'STK123'; // Firebase requires 6 chars minimum
 
-    // Check if account exists in adminAccounts from Firestore
+    try {
+      // 1. Try standard login with Firebase Auth
+      await signInWithEmailAndPassword(auth, cleanEmail, firebasePwd);
+    } catch (err: any) {
+      // 2. If it fails due to no account or wrong credential, check if they are authorized in Firestore
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+        try {
+          // Sign in anonymously temporarily to check Firestore
+          await signInAnonymously(auth);
+          
+          const serverAdmins = await api.getAdmins();
+          const registeredAccount = serverAdmins.find(a => a.email.toLowerCase() === cleanEmail);
+          
+          let validFirstTime = false;
+          
+          if (isTargetSuper) {
+            // SuperAdmin fallback: First time or PIN match
+            if (pin === '8282' && (!registeredAccount || !registeredAccount.securityPin || registeredAccount.securityPin === '8282')) {
+              validFirstTime = true;
+            } else if (registeredAccount && registeredAccount.securityPin === pin) {
+              validFirstTime = true;
+            }
+          } else if (registeredAccount && registeredAccount.securityPin === pin) {
+            // Regular admin PIN matches the one set by SuperAdmin
+            validFirstTime = true;
+          }
+
+          if (validFirstTime) {
+            // Elevate to real account. This signs out the anonymous user and logs them in.
+            await createUserWithEmailAndPassword(auth, cleanEmail, firebasePwd);
+          } else {
+            // Not authorized or wrong PIN
+            await signOut(auth);
+            return { success: false, message: 'PIN incorrecto o usuario no autorizado.' };
+          }
+        } catch (innerErr: any) {
+          await signOut(auth);
+          console.warn('Fallback login error:', innerErr);
+          if (innerErr.code === 'auth/email-already-in-use') {
+             return { success: false, message: 'El PIN no coincide con tu contraseña registrada. Si lo olvidaste, el SuperAdmin debe eliminar tu cuenta y crearla de nuevo.' };
+          }
+          return { success: false, message: 'Error de validación de seguridad.' };
+        }
+      } else {
+        return { success: false, message: err.message || 'Error de acceso.' };
+      }
+    }
+
+    // --- User is now successfully logged in with Firebase Auth ---
+
     let registeredAccount = adminAccounts.find(
       (acc) => acc.email.trim().toLowerCase() === cleanEmail
     );
     
-    // Refresh admins list from Firebase just to be sure
     try {
       const serverAdmins = await api.getAdmins();
       if (serverAdmins && serverAdmins.length > 0) {
@@ -620,52 +672,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         registeredAccount = serverAdmins.find((acc) => acc.email.trim().toLowerCase() === cleanEmail);
       }
     } catch (e) {
-      console.warn('Failed to refresh admins during login', e);
-    }
-
-    const cleanSuper = SUPER_ADMIN_EMAIL.toLowerCase();
-    // Accept both z and s variants to prevent lockout
-    const isTargetSuper = cleanEmail === cleanSuper || cleanEmail === 'andresbuitrago82@gmail.com';
-
-    // If it's not SuperAdmin and not registered: create access request
-    if (!isTargetSuper && !registeredAccount) {
-      const newAdmin: AdminAccount = {
-        id: `adm-${Date.now().toString(36)}`,
-        name: name || 'Usuario de Google',
-        email: cleanEmail,
-        role: 'Administrador',
-        status: 'pendiente',
-        avatarUrl,
-        permissions: {
-          canManageAdmins: false,
-          canEditInventory: true,
-          canSell: true,
-          canEditSales: true,
-          canViewReports: true,
-          canDeleteProducts: false,
-        },
-        createdAt: new Date().toISOString(),
-      };
-      
-      // Auto-save the access request in Firebase
-      try {
-        await api.addAdmin(newAdmin);
-      } catch (e) {
-        console.warn('Could not save access request', e);
-      }
-
-      const msg = `Tu cuenta está pendiente de aprobación. Se ha notificado al SuperAdmin (${SUPER_ADMIN_EMAIL}) para que autorice el acceso.`;
-      showToast(msg, 'info');
-      return { success: false, message: msg };
+      console.warn('Failed to refresh admins', e);
     }
 
     if (!isTargetSuper && registeredAccount && registeredAccount.status === 'inactivo') {
+      await signOut(auth);
       const msg = `Acceso denegado: La cuenta para "${email}" se encuentra inactiva.`;
       showToast(msg, 'error');
       return { success: false, message: msg };
     }
 
     if (!isTargetSuper && registeredAccount && registeredAccount.status === 'pendiente') {
+      await signOut(auth);
       const msg = `Acceso pendiente: El SuperAdmin aún no ha autorizado el ingreso para "${email}".`;
       showToast(msg, 'warning');
       return { success: false, message: msg };
@@ -676,8 +694,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       : (registeredAccount?.role || 'Administrador');
 
     const effectiveName = isTargetSuper 
-      ? (name || 'Andrés Buitrago')
-      : (registeredAccount?.name || name);
+      ? 'Andrés Buitrago'
+      : (registeredAccount?.name || 'Administrador');
 
     const effectivePermissions = isTargetSuper
       ? {
@@ -704,7 +722,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       role: effectiveRole,
       isSuperAdmin: isTargetSuper,
       avatarUrl: registeredAccount?.avatarUrl || avatarUrl,
-      provider: 'google',
+      provider: 'email',
       loggedAt: new Date().toISOString(),
       permissions: effectivePermissions,
     };
@@ -726,11 +744,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Failed to fetch initial tenant data', e);
     }
 
-    // Update lastLoginAt in Firebase
+    // Update lastLoginAt and bootstrap SuperAdmin in Firebase if missing
     if (registeredAccount) {
       api.updateAdmin(registeredAccount.id, { lastLoginAt: new Date().toISOString() });
     } else if (isTargetSuper) {
-      // Bootstrap SuperAdmin in Firebase if missing
       api.addAdmin({
         name: effectiveName,
         email: cleanEmail,

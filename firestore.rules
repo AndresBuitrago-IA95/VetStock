@@ -8,12 +8,12 @@ service cloud.firestore {
     }
 
     // Auth Helpers
-    function isSignedIn() { 
-      return request.auth != null && request.auth.token.email_verified == true; 
+    function isRealUser() { 
+      return request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous'; 
     }
     
     function isHardcodedSuperAdmin() {
-      return isSignedIn() && request.auth.token.email == 'andrezbuitrago82@gmail.com';
+      return isRealUser() && request.auth.token.email == 'andrezbuitrago82@gmail.com';
     }
 
     function isKnownAdmin() {
@@ -33,14 +33,15 @@ service cloud.firestore {
 
     // Admins Collection
     match /admins/{adminEmail} {
-      allow read: if isSignedIn() && isKnownAdmin();
-      allow create: if isSignedIn() && (isSuperAdmin() || (request.resource.data.status == 'pendiente' && adminEmail == request.auth.token.email));
-      allow update, delete: if isSignedIn() && isSuperAdmin();
+      // Allow anonymous users to read an admin doc during the first-time setup flow
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && (isSuperAdmin() || adminEmail == 'andrezbuitrago82@gmail.com');
+      allow update, delete: if isRealUser() && isSuperAdmin();
     }
 
     // Tenants Collection
     match /tenants/{tenantEmail} {
-      allow read, write: if isSignedIn() && isKnownAdmin();
+      allow read, write: if isRealUser() && isKnownAdmin();
     }
   }
 }

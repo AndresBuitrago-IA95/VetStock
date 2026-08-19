@@ -8,11 +8,12 @@ export function AdminLoginView() {
   const [authSuccessMsg, setAuthSuccessMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [emailInput, setEmailInput] = useState('');
+  const [pinInput, setPinInput] = useState('');
 
   // Secure Manual Email Login (Bypasses Google Auth domain restrictions on Vercel)
   const handleManualLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!emailInput.trim()) return;
+    if (!emailInput.trim() || !pinInput.trim()) return;
 
     setAuthError(null);
     setAuthSuccessMsg(null);
@@ -23,12 +24,11 @@ export function AdminLoginView() {
       // Use standard ui-avatars for generic image since we skipped Google provider
       const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(cleanEmail)}&background=random`;
 
-      // Call the existing context function but without real Google verification (trusted email entry)
+      // Call the existing context function to authenticate using Firebase Auth explicitly
       const loginRes = await loginWithGoogle(
         cleanEmail,
-        cleanEmail.split('@')[0], // generic name based on email
-        defaultAvatar,
-        { isGoogleVerified: true }
+        pinInput.trim(), // Use the second arg for PIN instead of name
+        defaultAvatar
       );
 
       if (!loginRes.success) {
@@ -119,9 +119,26 @@ export function AdminLoginView() {
                 />
               </div>
 
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Lock className="h-5 w-5 text-stone-400" />
+                </div>
+                <input
+                  type="password"
+                  required
+                  maxLength={4}
+                  pattern="\d{4}"
+                  inputMode="numeric"
+                  value={pinInput}
+                  onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ''))}
+                  placeholder="PIN de 4 dígitos"
+                  className="block w-full pl-10 pr-3 py-3.5 border border-stone-200 rounded-xl bg-stone-50 text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all font-medium sm:text-sm tracking-[0.5em] font-mono text-center"
+                />
+              </div>
+
               <button
                 type="submit"
-                disabled={isLoading || !emailInput.trim()}
+                disabled={isLoading || !emailInput.trim() || pinInput.length !== 4}
                 className="w-full relative flex items-center justify-center gap-3 bg-stone-900 hover:bg-stone-800 text-white font-bold py-3.5 px-4 rounded-xl shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-offset-2 disabled:opacity-70 disabled:cursor-not-allowed"
               >
                 {isLoading ? (

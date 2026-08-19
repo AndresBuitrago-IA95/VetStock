@@ -590,20 +590,42 @@ export const AdminManagementView: React.FC = () => {
 
               <div>
                 <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
-                  Correo de Google (Gmail o Workspace) *
+                  Correo Electrónico *
                 </label>
                 <input
                   type="email"
                   required
                   value={formEmail}
                   onChange={(e) => setFormEmail(e.target.value)}
-                  placeholder="laura.veterinaria@gmail.com"
+                  placeholder="laura.veterinaria@ejemplo.com"
                   className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
                 />
                 <p className="text-[11px] text-stone-500 mt-1">
                   Este correo tendrá una base de datos propia e independiente.
                 </p>
               </div>
+
+              {!editingAdmin && (
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                    <KeyRound className="w-3.5 h-3.5" />
+                    Asignar PIN de Acceso *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={4}
+                    pattern="\d{4}"
+                    value={formPin}
+                    onChange={(e) => setFormPin(e.target.value.replace(/\D/g, ''))}
+                    placeholder="Ej: 1234"
+                    className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-700"
+                  />
+                  <p className="text-[11px] text-stone-500 mt-1">
+                    El usuario usará este PIN de 4 dígitos para ingresar. Podrá cambiarlo después.
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
