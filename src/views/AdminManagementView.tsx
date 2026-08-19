@@ -491,11 +491,14 @@ export const AdminManagementView: React.FC = () => {
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors ${
                             admin.status === 'activo'
                               ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
-                              : 'bg-stone-100 text-stone-500 border border-stone-300 hover:bg-stone-200'
+                              : admin.status === 'pendiente'
+                                ? 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 shadow-sm'
+                                : 'bg-stone-100 text-stone-500 border border-stone-300 hover:bg-stone-200'
                           } ${isAccountSuper ? 'cursor-not-allowed opacity-90' : 'cursor-pointer'}`}
+                          title={admin.status === 'pendiente' ? 'Aprobar acceso' : 'Cambiar estado'}
                         >
-                          <span className={`w-1.5 h-1.5 rounded-full ${admin.status === 'activo' ? 'bg-emerald-600' : 'bg-stone-400'}`} />
-                          {admin.status === 'activo' ? 'Activo' : 'Inactivo'}
+                          <span className={`w-1.5 h-1.5 rounded-full ${admin.status === 'activo' ? 'bg-emerald-600' : admin.status === 'pendiente' ? 'bg-amber-500 animate-pulse' : 'bg-stone-400'}`} />
+                          {admin.status === 'activo' ? 'Activo' : admin.status === 'pendiente' ? 'Autorizar Acceso' : 'Inactivo'}
                         </button>
                       </td>
 

@@ -17,17 +17,25 @@ service cloud.firestore {
     }
 
     function isKnownAdmin() {
-      return isHardcodedSuperAdmin() || exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
+      return isHardcodedSuperAdmin() || (
+        exists(/databases/$(database)/documents/admins/$(request.auth.token.email)) && 
+        get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.status == 'activo'
+      );
     }
     
     function isSuperAdmin() {
-      return isHardcodedSuperAdmin() || (exists(/databases/$(database)/documents/admins/$(request.auth.token.email)) && get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.role == 'SuperAdmin');
+      return isHardcodedSuperAdmin() || (
+        exists(/databases/$(database)/documents/admins/$(request.auth.token.email)) && 
+        get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.role == 'SuperAdmin' &&
+        get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.status == 'activo'
+      );
     }
 
     // Admins Collection
     match /admins/{adminEmail} {
       allow read: if isSignedIn() && isKnownAdmin();
-      allow write: if isSignedIn() && isSuperAdmin();
+      allow create: if isSignedIn() && (isSuperAdmin() || (request.resource.data.status == 'pendiente' && adminEmail == request.auth.token.email));
+      allow update, delete: if isSignedIn() && isSuperAdmin();
     }
 
     // Tenants Collection

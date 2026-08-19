@@ -107,7 +107,7 @@ export interface AdminAccount {
   email: string;
   role: AdminRole;
   avatarUrl?: string;
-  status: 'activo' | 'inactivo';
+  status: 'activo' | 'inactivo' | 'pendiente';
   phone?: string;
   securityPin?: string;
   permissions: AdminPermissions;

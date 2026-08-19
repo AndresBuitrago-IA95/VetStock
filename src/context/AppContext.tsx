@@ -624,17 +624,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const cleanSuper = SUPER_ADMIN_EMAIL.toLowerCase();
-    const isTargetSuper = cleanEmail === cleanSuper;
+    // Accept both z and s variants to prevent lockout
+    const isTargetSuper = cleanEmail === cleanSuper || cleanEmail === 'andresbuitrago82@gmail.com';
 
-    // If it's not SuperAdmin and not registered or inactive
+    // If it's not SuperAdmin and not registered: create access request
     if (!isTargetSuper && !registeredAccount) {
-      const msg = `Acceso denegado: El correo "${email}" no está registrado como administrador autorizado. Contacta al SuperAdmin (${SUPER_ADMIN_EMAIL}) para habilitar tu cuenta y base de datos.`;
-      showToast(msg, 'error');
+      const newAdmin: AdminAccount = {
+        id: `adm-${Date.now().toString(36)}`,
+        name: name || 'Usuario de Google',
+        email: cleanEmail,
+        role: 'Administrador',
+        status: 'pendiente',
+        avatarUrl,
+        permissions: {
+          canManageAdmins: false,
+          canEditInventory: true,
+          canSell: true,
+          canEditSales: true,
+          canViewReports: true,
+          canDeleteProducts: false,
+        },
+        createdAt: new Date().toISOString(),
+      };
+      
+      // Auto-save the access request in Firebase
+      try {
+        await api.addAdmin(newAdmin);
+      } catch (e) {
+        console.warn('Could not save access request', e);
+      }
+
+      const msg = `Tu cuenta está pendiente de aprobación. Se ha notificado al SuperAdmin (${SUPER_ADMIN_EMAIL}) para que autorice el acceso.`;
+      showToast(msg, 'info');
       return { success: false, message: msg };
     }
 
     if (!isTargetSuper && registeredAccount && registeredAccount.status === 'inactivo') {
-      const msg = `Acceso restringido: La cuenta para "${email}" se encuentra suspendida o inactiva por el SuperAdmin.`;
+      const msg = `Acceso denegado: La cuenta para "${email}" se encuentra inactiva.`;
+      showToast(msg, 'error');
+      return { success: false, message: msg };
+    }
+
+    if (!isTargetSuper && registeredAccount && registeredAccount.status === 'pendiente') {
+      const msg = `Acceso pendiente: El SuperAdmin aún no ha autorizado el ingreso para "${email}".`;
       showToast(msg, 'warning');
       return { success: false, message: msg };
     }
@@ -807,7 +839,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('La cuenta de SuperAdmin siempre debe permanecer activa', 'warning');
       return;
     }
+    // If it's pendiente or inactivo, make it activo. If it's activo, make it inactivo.
     const newStatus = target?.status === 'activo' ? 'inactivo' : 'activo';
+    
     setAdminAccounts((prev) =>
       prev.map((a) =>
         a.id === id
@@ -816,7 +850,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
     api.updateAdmin(id, { status: newStatus }).catch((e) => console.warn('Failed to toggle admin status on server:', e));
-    showToast('Estado del administrador actualizado', 'info');
+    
+    if (target?.status === 'pendiente') {
+      showToast(`Acceso autorizado para ${target.email}`, 'success');
+    } else {
+      showToast(`Estado del administrador actualizado a ${newStatus}`, 'info');
+    }
   };
 
   // Add a new product
