@@ -11,3 +11,79 @@
 html, body {
   overflow-x: hidden;
 }
+
+/* iOS Safari specific fixes */
+@supports (-webkit-touch-callout: none) {
+  body {
+    height: -webkit-fill-available;
+  }
+  
+  #root {
+    min-height: -webkit-fill-available;
+  }
+}
+
+/* Prevent zoom on input focus in iOS */
+@media screen and (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Fix for iOS Safari bottom bar */
+.min-h-screen {
+  min-height: 100vh;
+  min-height: -webkit-fill-available;
+}
+
+/* Better scrolling on iOS */
+* {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent pull-to-refresh on mobile */
+body {
+  overscroll-behavior-y: contain;
+}
+
+/* Fix for modals on mobile - ensure they cover the whole screen */
+.fixed.inset-0 {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 100vh;
+  height: -webkit-fill-available;
+}
+
+/* Touch target sizes for mobile accessibility */
+@media (max-width: 767px) {
+  button:not(.no-min-size),
+  a:not(.no-min-size) {
+    min-height: 44px;
+  }
+}
+
+/* Video element fixes for camera on mobile */
+video {
+  object-fit: cover;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}
+
+/* Prevent iOS from styling buttons */
+button,
+input[type="submit"],
+input[type="button"] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Better tap highlight */
+* {
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0.05);
+}
+

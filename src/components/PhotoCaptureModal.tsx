@@ -38,21 +38,31 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
     setCameraError(null);
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        // Mobile-optimized constraints
+        const constraints = {
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920, max: 1920 },
+            height: { ideal: 1080, max: 1080 }
+          },
           audio: false,
-        });
+        };
+        
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         setCameraStream(stream);
         setIsCameraActive(true);
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          // Ensure autoplay works on iOS
+          videoRef.current.setAttribute('playsinline', 'true');
+          videoRef.current.play().catch(err => console.warn('Autoplay prevented:', err));
         }
       } else {
         setCameraError('La cámara no está disponible en este navegador.');
       }
     } catch (err: unknown) {
       console.warn('Camera access denied or unavailable:', err);
-      setCameraError('No se pudo acceder a la cámara. Revisa los permisos o sube una imagen.');
+      setCameraError('No se pudo acceder a la cámara. Revisa los permisos del navegador o usa la opción de subir imagen.');
       setIsCameraActive(false);
     }
   };
@@ -115,10 +125,11 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-xs overflow-y-auto">
       <div 
         id="photo-modal-card"
-        className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden border border-stone-200 flex flex-col max-h-[90dvh]"
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-stone-200 flex flex-col"
+        style={{ maxHeight: '95vh', maxHeight: '-webkit-fill-available' }}
       >
         {/* Header */}
         <div className="p-4 border-b border-stone-100 flex items-center justify-between bg-stone-50/80">
@@ -202,20 +213,21 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                   </div>
                 </div>
               ) : isCameraActive ? (
-                <div className="relative w-full aspect-4/3 bg-black rounded-xl overflow-hidden shadow-inner flex items-center justify-center">
+                <div className="relative w-full bg-black rounded-xl overflow-hidden shadow-inner flex items-center justify-center" style={{ aspectRatio: '4/3' }}>
                   <video
                     ref={videoRef}
                     autoPlay
                     playsInline
                     muted
                     className="w-full h-full object-cover"
+                    style={{ transform: 'scaleX(1)' }}
                   />
-                  <div className="absolute bottom-4 inset-x-0 flex justify-center">
+                  <div className="absolute bottom-4 inset-x-0 flex justify-center z-10">
                     <button
                       id="capture-snapshot-btn"
                       type="button"
                       onClick={captureSnapshot}
-                      className="px-5 py-2.5 bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white rounded-full font-medium shadow-lg flex items-center gap-2 transition-all"
+                      className="px-5 py-3 bg-emerald-700 hover:bg-emerald-800 active:scale-95 text-white rounded-full font-medium shadow-lg flex items-center gap-2 transition-all touch-manipulation"
                     >
                       <Camera className="w-5 h-5" />
                       Capturar fotografía
@@ -251,6 +263,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
+                capture="environment"
                 className="hidden"
                 onChange={handleFileUpload}
               />
