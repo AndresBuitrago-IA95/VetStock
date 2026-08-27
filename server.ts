@@ -44,6 +44,7 @@ interface TenantData {
   sales: any[];
   settings?: any;
   user?: any;
+  lastModified?: string;
 }
 
 interface DatabaseStore {
@@ -325,6 +326,7 @@ app.get('/api/tenant/:email', (req, res) => {
     sales: [],
     settings: null,
     user: null,
+    lastModified: new Date().toISOString(),
   };
   res.json({ success: true, data: tenant });
 });
@@ -333,7 +335,7 @@ app.get('/api/tenant/:email', (req, res) => {
 app.post('/api/tenant/:email', (req, res) => {
   const db = readDB();
   const cleanEmail = req.params.email.trim().toLowerCase();
-  const { products, movements, sales, settings, user } = req.body;
+  const { products, movements, sales, settings, user, lastModified } = req.body;
 
   db.tenants[cleanEmail] = {
     products: products || [],
@@ -341,10 +343,11 @@ app.post('/api/tenant/:email', (req, res) => {
     sales: sales || [],
     settings: settings || null,
     user: user || null,
+    lastModified: lastModified || new Date().toISOString(),
   };
 
   saveDB(db);
-  res.json({ success: true, message: 'Datos sincronizados en la nube correctamente' });
+  res.json({ success: true, message: 'Datos sincronizados en la nube correctamente', lastModified: db.tenants[cleanEmail].lastModified });
 });
 
 // ----------------- VITE MIDDLEWARE / STATIC SERVING -----------------

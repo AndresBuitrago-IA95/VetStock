@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Database files (user data)
+data/*.json
+!data/.gitkeep

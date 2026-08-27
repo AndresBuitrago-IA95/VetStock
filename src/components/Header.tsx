@@ -12,7 +12,8 @@ import {
   Building2,
   Sparkles,
   LogOut,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCw
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { GoogleLogo } from '../views/AdminLoginView';
@@ -37,10 +38,13 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
     totalAlertsCount,
     setSelectedProductId,
     setIsDetailModalOpen,
+    forceSyncFromServer,
+    lastSyncTime,
   } = useApp();
 
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
@@ -92,6 +96,26 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
     setIsNotificationsOpen(false);
   };
 
+  const handleForceSync = async () => {
+    setIsSyncing(true);
+    await forceSyncFromServer();
+    setTimeout(() => setIsSyncing(false), 500);
+  };
+
+  const formatLastSync = (timestamp: string | null) => {
+    if (!timestamp) return 'No sincronizado';
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    
+    if (diffMins < 1) return 'Hace menos de 1 min';
+    if (diffMins < 60) return `Hace ${diffMins} min`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `Hace ${diffHours}h`;
+    return date.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' });
+  };
+
   return (
     <header 
       id="app-header"
@@ -121,8 +145,21 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
         </div>
       </div>
 
-      {/* Right section: Action buttons + Notifications + User */}
+      {/* Right section: Action buttons + Sync + Notifications + User */}
       <div className="flex items-center gap-2.5">
+        {/* Sync button - visible on all devices */}
+        <button
+          id="header-sync-btn"
+          type="button"
+          onClick={handleForceSync}
+          disabled={isSyncing}
+          className="flex items-center gap-1.5 px-2.5 py-2 bg-white hover:bg-stone-50 border border-stone-300 hover:border-stone-400 text-stone-700 text-xs font-bold rounded-xl transition-all shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
+          title={`Última sincronización: ${formatLastSync(lastSyncTime)}`}
+        >
+          <RefreshCw className={`w-4 h-4 text-blue-600 ${isSyncing ? 'animate-spin' : ''}`} />
+          <span className="hidden md:inline">Sincronizar</span>
+        </button>
+
         {/* Quick action: New Product */}
         <button
           id="header-new-product-btn"

@@ -23,6 +23,7 @@ import {
 } from '../data/mockData';
 import { getProductStatus } from '../utils/formatters';
 import { api } from '../services/api';
+import { useSync } from '../hooks/useSync';
 
 export interface DatabaseStats {
   adminEmail: string;
@@ -54,6 +55,10 @@ interface AppContextType {
   loadDemoData: () => void;
   clearActiveDatabase: () => void;
   importDatabaseBackup: (backupJson: any) => boolean;
+  
+  // Sync functions
+  forceSyncFromServer: () => Promise<boolean>;
+  lastSyncTime: string | null;
 
   // Auth actions
   loginWithGoogle: (
@@ -278,6 +283,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [sales, setSales] = useState<Sale[]>(() => loadTenantSales(activeTenantEmail));
   const [clinicSettings, setClinicSettings] = useState<ClinicSettings>(() => loadTenantSettings(activeTenantEmail));
   const [userProfile, setUserProfile] = useState<UserProfile>(() => loadTenantUser(activeTenantEmail));
+  
+  // Sync timestamp tracking
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
   // Tracks whether `products`/`sales`/etc in memory still belong to the
   // PREVIOUS tenant, right in the middle of a switch. Without this guard,
@@ -327,8 +335,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         if (cloudData.sales && cloudData.sales.length > 0) setSales(cloudData.sales);
         if (cloudData.settings) setClinicSettings(cloudData.settings);
         if (cloudData.user) setUserProfile(cloudData.user);
+        // Track sync timestamp
+        if ((cloudData as any).lastModified) {
+          setLastSyncTime((cloudData as any).lastModified);
+        }
       }
     });
+
 
     return () => {
       isMounted = false;
@@ -1023,6 +1036,64 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Base de datos inicializada limpia y lista para registrar productos', 'info');
   };
 
+  // Force sync from server function
+  const forceSyncFromServer = useCallback(async (): Promise<boolean> => {
+    if (!activeTenantEmail) return false;
+    
+    try {
+      const cloudData = await api.getTenantData(activeTenantEmail);
+      if (!cloudData) {
+        showToast('No se pudo conectar con el servidor', 'error');
+        return false;
+      }
+      
+      // Update all states with cloud data
+      if (cloudData.products) setProducts(cloudData.products);
+      if (cloudData.movements) setStockMovements(cloudData.movements);
+      if (cloudData.sales) setSales(cloudData.sales);
+      if (cloudData.settings) setClinicSettings(cloudData.settings);
+      if (cloudData.user) setUserProfile(cloudData.user);
+      if ((cloudData as any).lastModified) {
+        setLastSyncTime((cloudData as any).lastModified);
+      }
+      
+      showToast('Datos actualizados desde el servidor', 'success');
+      return true;
+    } catch (err) {
+      console.error('Error in force sync:', err);
+      showToast('Error al sincronizar con el servidor', 'error');
+      return false;
+    }
+  }, [activeTenantEmail, showToast]);
+
+  // Periodic sync with server (every 30 seconds when authenticated)
+  useEffect(() => {
+    if (!adminUser || !activeTenantEmail) return;
+    
+    const intervalId = setInterval(() => {
+      api.getTenantData(activeTenantEmail).then((cloudData) => {
+        if (cloudData && (cloudData as any).lastModified) {
+          const remoteTimestamp = (cloudData as any).lastModified;
+          
+          // Only update if remote is newer
+          if (!lastSyncTime || remoteTimestamp > lastSyncTime) {
+            if (cloudData.products) setProducts(cloudData.products);
+            if (cloudData.movements) setStockMovements(cloudData.movements);
+            if (cloudData.sales) setSales(cloudData.sales);
+            if (cloudData.settings) setClinicSettings(cloudData.settings);
+            if (cloudData.user) setUserProfile(cloudData.user);
+            setLastSyncTime(remoteTimestamp);
+            console.log('[AutoSync] Datos actualizados desde el servidor');
+          }
+        }
+      }).catch(err => {
+        console.warn('[AutoSync] Error checking for updates:', err);
+      });
+    }, 30000); // 30 seconds
+    
+    return () => clearInterval(intervalId);
+  }, [adminUser, activeTenantEmail, lastSyncTime]);
+
   // Computed alerts
   const outOfStockProducts = useMemo(() => products.filter((p) => p.stock <= 0), [products]);
   const lowStockProducts = useMemo(() => products.filter((p) => p.stock > 0 && p.stock <= p.minStock), [products]);
@@ -1083,6 +1154,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateClinicSettings,
         updateUserProfile,
         resetToMockData,
+        forceSyncFromServer,
+        lastSyncTime,
         outOfStockProducts,
         lowStockProducts,
         expiringProducts,
