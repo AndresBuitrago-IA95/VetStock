@@ -21,42 +21,6 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-interface AdminAccount {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  avatarUrl?: string;
-  status: 'activo' | 'inactivo';
-  phone?: string;
-  securityPin?: string;
-  permissions: {
-    canManageAdmins: boolean;
-    canEditInventory: boolean;
-    canSell: boolean;
-    canEditSales: boolean;
-    canViewReports: boolean;
-    canDeleteProducts: boolean;
-  };
-  createdAt: string;
-  lastLoginAt?: string;
-  notes?: string;
-}
-
-interface TenantData {
-  products: any[];
-  movements: any[];
-  sales: any[];
-  settings?: any;
-  user?: any;
-  lastModified?: string;
-}
-
-interface DatabaseStore {
-  adminAccounts: AdminAccount[];
-  tenants: Record<string, TenantData>;
-}
-
 const DEFAULT_SUPERADMINS = [
   {
     id: 'adm-super',
