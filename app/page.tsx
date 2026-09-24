@@ -10,6 +10,7 @@ type Product = {
   minStock: number;
   cost: number;
   price: number;
+  expirationDate?: string;
   image?: string;
 };
 
@@ -97,10 +98,17 @@ type AppState = {
   clinics: Clinic[];
 };
 
-type TabKey = 'Dashboard' | 'Inventario' | 'Ventas' | 'Compras' | 'Clientes' | 'Proveedores' | 'Empleados' | 'Caja';
+type TabKey = 'Dashboard' | 'Inventario' | 'Ventas';
+
+type ToastNotification = {
+  id: number;
+  message: string;
+  type: 'success' | 'error' | 'info';
+};
 
 const SESSION_COOKIE_NAME = 'vetstock-session';
-const POLL_INTERVAL_MS = 2000;
+const LOCAL_STORAGE_KEY = 'vetstock-app-state';
+const POLL_INTERVAL_MS = 2500;
 
 const defaultData: AppState = {
   superAdmin: {
@@ -127,6 +135,7 @@ const emptyProductForm = {
   minStock: '0',
   cost: '0',
   price: '0',
+  expirationDate: '',
   image: '',
 };
 
@@ -160,17 +169,46 @@ function writeSessionCookie(session: Session | null) {
   document.cookie = `${SESSION_COOKIE_NAME}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
 }
 
+function readLocalStorageState(): AppState | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as AppState;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalStorageState(data: AppState) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
+  } catch (err) {
+    console.warn('LocalStorage save error:', err);
+  }
+}
+
 async function loadAppState(): Promise<AppState> {
   try {
     const response = await fetch('/api/state', { cache: 'no-store' });
-    if (!response.ok) return defaultData;
-    return (await response.json()) as AppState;
+    if (!response.ok) {
+      return readLocalStorageState() || defaultData;
+    }
+    const data = (await response.json()) as AppState;
+    if (data && Array.isArray(data.clinics)) {
+      writeLocalStorageState(data);
+      return data;
+    }
+    return readLocalStorageState() || defaultData;
   } catch {
-    return defaultData;
+    return readLocalStorageState() || defaultData;
   }
 }
 
 async function saveAppState(data: AppState) {
+  writeLocalStorageState(data);
+
   const response = await fetch('/api/state', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -178,7 +216,8 @@ async function saveAppState(data: AppState) {
   });
 
   if (!response.ok) {
-    throw new Error('No se pudo guardar el estado');
+    const errPayload = await response.json().catch(() => ({}));
+    throw new Error(errPayload.error || 'No se pudo guardar el estado en el servidor');
   }
 
   return (await response.json()) as AppState;
@@ -202,12 +241,30 @@ export default function HomePage() {
   const [superAdminPasswordMessage, setSuperAdminPasswordMessage] = useState('');
   const [clinicPasswordForm, setClinicPasswordForm] = useState({ clinicId: '', newPassword: '', confirmPassword: '' });
   const [clinicPasswordMessage, setClinicPasswordMessage] = useState('');
+  
+  // Product state
   const [productForm, setProductForm] = useState(emptyProductForm);
   const productCameraInputRef = useRef<HTMLInputElement | null>(null);
   const productFileInputRef = useRef<HTMLInputElement | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+
+  // Search & Filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+
+  // UI state
   const [activeTab, setActiveTab] = useState<TabKey>('Dashboard');
   const [saleForm, setSaleForm] = useState({ productId: '', quantity: '1', clientName: '' });
+  const [toast, setToast] = useState<ToastNotification | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    const id = Date.now();
+    setToast({ id, message, type });
+    setTimeout(() => {
+      setToast((current) => (current?.id === id ? null : current));
+    }, 3500);
+  };
 
   useEffect(() => {
     const syncState = async () => {
@@ -244,9 +301,32 @@ export default function HomePage() {
     return currentClinic.inventory.filter((item) => item.stock <= item.minStock);
   }, [currentClinic]);
 
+  const expiringSoonItems = useMemo(() => {
+    if (!currentClinic) return [];
+    const today = new Date();
+    const thirtyDays = new Date();
+    thirtyDays.setDate(today.getDate() + 30);
+
+    return currentClinic.inventory.filter((item) => {
+      if (!item.expirationDate) return false;
+      const exp = new Date(item.expirationDate);
+      return exp <= thirtyDays;
+    });
+  }, [currentClinic]);
+
   const totalMonthlySales = useMemo(() => {
     if (!currentClinic) return 0;
     return currentClinic.sales.reduce((total, item) => total + item.total, 0);
+  }, [currentClinic]);
+
+  const estimatedGrossProfit = useMemo(() => {
+    if (!currentClinic) return 0;
+    return currentClinic.sales.reduce((profit, sale) => {
+      const product = currentClinic.inventory.find((p) => p.name.toLowerCase() === sale.product.toLowerCase());
+      const unitCost = product ? product.cost : 0;
+      const unitPrice = sale.total / (sale.qty || 1);
+      return profit + (unitPrice - unitCost) * sale.qty;
+    }, 0);
   }, [currentClinic]);
 
   const totalPurchases = useMemo(() => {
@@ -260,6 +340,27 @@ export default function HomePage() {
       return item.type === 'ingreso' ? total + item.amount : total - item.amount;
     }, 0);
   }, [currentClinic]);
+
+  // Inventory Categories List
+  const availableCategories = useMemo(() => {
+    if (!currentClinic) return [];
+    const set = new Set<string>();
+    currentClinic.inventory.forEach((item) => {
+      if (item.category) set.add(item.category);
+    });
+    return Array.from(set);
+  }, [currentClinic]);
+
+  // Filtered Inventory
+  const filteredInventory = useMemo(() => {
+    if (!currentClinic) return [];
+    return currentClinic.inventory.filter((item) => {
+      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            item.category.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory = !categoryFilter || item.category === categoryFilter;
+      return matchesSearch && matchesCategory;
+    });
+  }, [currentClinic, searchQuery, categoryFilter]);
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -286,6 +387,7 @@ export default function HomePage() {
       writeSessionCookie(payload.user);
       setSession(payload.user);
       setLoginError('');
+      showToast(`¡Bienvenido, ${payload.user.name}! 🐾`, 'success');
     } catch {
       setLoginError('No se pudo iniciar sesión en este momento.');
     }
@@ -304,13 +406,17 @@ export default function HomePage() {
     const trimmedPassword = clinicForm.password.trim();
 
     if (!trimmedName || !trimmedEmail || !trimmedPassword) {
+      showToast('Por favor completa los campos requeridos', 'error');
       return;
     }
 
     const exists = appData.clinics.some(
       (clinic) => clinic.email.toLowerCase() === trimmedEmail.toLowerCase() && clinic.id !== editingClinicId,
     );
-    if (exists) return;
+    if (exists) {
+      showToast('Ya existe una veterinaria registrada con ese email', 'error');
+      return;
+    }
 
     const nextClinics = editingClinicId
       ? appData.clinics.map((clinic) =>
@@ -346,8 +452,14 @@ export default function HomePage() {
 
     const nextState = { ...appData, clinics: nextClinics };
     setAppData(nextState);
-    await saveAppState(nextState);
-    resetClinicForm();
+
+    try {
+      await saveAppState(nextState);
+      showToast(editingClinicId ? 'Veterinaria actualizada' : 'Veterinaria guardada correctamente');
+      resetClinicForm();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Error al guardar veterinaria', 'error');
+    }
   };
 
   const handleEditClinic = (clinic: Clinic) => {
@@ -373,10 +485,15 @@ export default function HomePage() {
       clinics: appData.clinics.filter((clinic) => clinic.id !== clinicId),
     };
     setAppData(nextState);
-    await saveAppState(nextState);
 
-    if (editingClinicId === clinicId) {
-      resetClinicForm();
+    try {
+      await saveAppState(nextState);
+      showToast('Veterinaria eliminada', 'info');
+      if (editingClinicId === clinicId) {
+        resetClinicForm();
+      }
+    } catch (err) {
+      showToast('Error al eliminar veterinaria', 'error');
     }
   };
 
@@ -407,9 +524,14 @@ export default function HomePage() {
     };
 
     setAppData(nextState);
-    await saveAppState(nextState);
-    setSuperAdminPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-    setSuperAdminPasswordMessage('Contraseña actualizada correctamente.');
+    try {
+      await saveAppState(nextState);
+      setSuperAdminPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setSuperAdminPasswordMessage('');
+      showToast('Contraseña de superadmin actualizada correctamente');
+    } catch {
+      setSuperAdminPasswordMessage('Error al actualizar la contraseña');
+    }
   };
 
   const handleUpdateClinicPassword = async (event: FormEvent<HTMLFormElement>) => {
@@ -437,9 +559,14 @@ export default function HomePage() {
     };
 
     setAppData(nextState);
-    await saveAppState(nextState);
-    setClinicPasswordForm({ clinicId: '', newPassword: '', confirmPassword: '' });
-    setClinicPasswordMessage('Contraseña actualizada para la veterinaria.');
+    try {
+      await saveAppState(nextState);
+      setClinicPasswordForm({ clinicId: '', newPassword: '', confirmPassword: '' });
+      setClinicPasswordMessage('');
+      showToast('Contraseña de veterinaria actualizada');
+    } catch {
+      setClinicPasswordMessage('Error al actualizar la contraseña');
+    }
   };
 
   const updateProductFormField = (field: keyof typeof emptyProductForm, value: string) => {
@@ -449,6 +576,7 @@ export default function HomePage() {
     }));
   };
 
+  // High-performance photo compression
   const handleProductImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -460,7 +588,7 @@ export default function HomePage() {
 
       const img = new window.Image();
       img.onload = () => {
-        const maxDimension = 1200;
+        const maxDimension = 400;
         const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
         const width = Math.max(1, Math.round(img.width * scale));
         const height = Math.max(1, Math.round(img.height * scale));
@@ -481,7 +609,7 @@ export default function HomePage() {
 
         setProductForm((current) => ({
           ...current,
-          image: canvas.toDataURL('image/jpeg', 0.8),
+          image: canvas.toDataURL('image/jpeg', 0.6),
         }));
       };
       img.src = dataUrl;
@@ -493,23 +621,30 @@ export default function HomePage() {
 
   const handleSaveProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!currentClinic) return;
+    if (!currentClinic) {
+      showToast('No se encontró una sesión activa de veterinaria', 'error');
+      return;
+    }
+
+    if (!productForm.name.trim()) {
+      showToast('Por favor ingresa el nombre del producto', 'error');
+      return;
+    }
 
     const parsedStock = Number(productForm.stock);
     const parsedMinStock = Number(productForm.minStock);
     const parsedCost = Number(productForm.cost);
     const parsedPrice = Number(productForm.price);
 
-    if (!productForm.name.trim()) return;
-
     const item: Product = {
       id: editingProductId ?? `product-${Date.now()}`,
       name: productForm.name.trim(),
       category: productForm.category.trim() || 'General',
-      stock: Number.isFinite(parsedStock) ? parsedStock : 0,
-      minStock: Number.isFinite(parsedMinStock) ? parsedMinStock : 0,
-      cost: Number.isFinite(parsedCost) ? parsedCost : 0,
-      price: Number.isFinite(parsedPrice) ? parsedPrice : 0,
+      stock: Number.isFinite(parsedStock) && !isNaN(parsedStock) ? Math.max(0, parsedStock) : 0,
+      minStock: Number.isFinite(parsedMinStock) && !isNaN(parsedMinStock) ? Math.max(0, parsedMinStock) : 0,
+      cost: Number.isFinite(parsedCost) && !isNaN(parsedCost) ? Math.max(0, parsedCost) : 0,
+      price: Number.isFinite(parsedPrice) && !isNaN(parsedPrice) ? Math.max(0, parsedPrice) : 0,
+      expirationDate: productForm.expirationDate || undefined,
       image: productForm.image || undefined,
     };
 
@@ -523,14 +658,31 @@ export default function HomePage() {
         };
       }
 
-      return { ...clinic, inventory: [...clinic.inventory, item] };
+      return { ...clinic, inventory: [item, ...clinic.inventory] };
     });
 
     const nextState: AppState = { ...appData, clinics: updatedClinics };
     setAppData(nextState);
-    await saveAppState(nextState);
-    setProductForm(emptyProductForm);
+
+    try {
+      await saveAppState(nextState);
+      showToast(editingProductId ? '¡Producto actualizado! 🐾' : '¡Producto guardado exitosamente! 🐾', 'success');
+      setProductForm(emptyProductForm);
+      setEditingProductId(null);
+      setIsProductModalOpen(false);
+    } catch (err) {
+      console.error('Error saving product:', err);
+      showToast('Guardado localmente. (Error de red)', 'info');
+      setProductForm(emptyProductForm);
+      setEditingProductId(null);
+      setIsProductModalOpen(false);
+    }
+  };
+
+  const openNewProductModal = () => {
     setEditingProductId(null);
+    setProductForm(emptyProductForm);
+    setIsProductModalOpen(true);
   };
 
   const handleEditProduct = (product: Product) => {
@@ -542,12 +694,18 @@ export default function HomePage() {
       minStock: String(product.minStock),
       cost: String(product.cost),
       price: String(product.price),
+      expirationDate: product.expirationDate ?? '',
       image: product.image ?? '',
     });
+    setIsProductModalOpen(true);
   };
 
   const handleDeleteProduct = async (productId: string) => {
     if (!currentClinic) return;
+
+    const targetProduct = currentClinic.inventory.find((p) => p.id === productId);
+    const confirmMsg = targetProduct ? `¿Eliminar "${targetProduct.name}"?` : '¿Eliminar producto?';
+    if (!window.confirm(confirmMsg)) return;
 
     const updatedClinics = appData.clinics.map((clinic) => {
       if (clinic.id !== currentClinic.id) return clinic;
@@ -556,11 +714,18 @@ export default function HomePage() {
 
     const nextState: AppState = { ...appData, clinics: updatedClinics };
     setAppData(nextState);
-    await saveAppState(nextState);
 
-    if (editingProductId === productId) {
-      setEditingProductId(null);
-      setProductForm(emptyProductForm);
+    try {
+      await saveAppState(nextState);
+      showToast('Producto eliminado', 'info');
+
+      if (editingProductId === productId) {
+        setEditingProductId(null);
+        setProductForm(emptyProductForm);
+        setIsProductModalOpen(false);
+      }
+    } catch (err) {
+      showToast('Error al eliminar producto', 'error');
     }
   };
 
@@ -569,10 +734,21 @@ export default function HomePage() {
     if (!currentClinic) return;
 
     const selectedProduct = currentClinic.inventory.find((item) => item.id === saleForm.productId);
-    if (!selectedProduct) return;
+    if (!selectedProduct) {
+      showToast('Selecciona un producto válido', 'error');
+      return;
+    }
 
     const quantity = Number(saleForm.quantity);
-    if (!Number.isFinite(quantity) || quantity <= 0) return;
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      showToast('La cantidad debe ser mayor a 0', 'error');
+      return;
+    }
+
+    if (quantity > selectedProduct.stock) {
+      showToast(`Stock insuficiente. Disponible: ${selectedProduct.stock}`, 'error');
+      return;
+    }
 
     const total = selectedProduct.price * quantity;
     const updatedInventory = currentClinic.inventory.map((item) => {
@@ -611,8 +787,120 @@ export default function HomePage() {
 
     const nextState: AppState = { ...appData, clinics: updatedClinics };
     setAppData(nextState);
-    await saveAppState(nextState);
-    setSaleForm({ productId: '', quantity: '1', clientName: '' });
+
+    try {
+      await saveAppState(nextState);
+      showToast(`¡Venta de ${selectedProduct.name} registrada! 🛒`, 'success');
+      setSaleForm({ productId: '', quantity: '1', clientName: '' });
+    } catch (err) {
+      showToast('Venta guardada localmente', 'info');
+      setSaleForm({ productId: '', quantity: '1', clientName: '' });
+    }
+  };
+
+  // Delete sale and restore inventory stock automatically
+  const handleDeleteSale = async (saleId: string) => {
+    if (!currentClinic) return;
+
+    const targetSale = currentClinic.sales.find((sale) => sale.id === saleId);
+    if (!targetSale) return;
+
+    const shouldDelete = window.confirm(
+      `¿Deseas eliminar la venta de "${targetSale.product}" por ${formatCurrency(targetSale.total)}?\n\nEl stock de ${targetSale.qty} unidad(es) será devuelto automáticamente al inventario.`,
+    );
+    if (!shouldDelete) return;
+
+    // Restore inventory stock for matching product
+    const updatedInventory = currentClinic.inventory.map((item) => {
+      if (item.name.toLowerCase() === targetSale.product.toLowerCase()) {
+        return { ...item, stock: item.stock + targetSale.qty };
+      }
+      return item;
+    });
+
+    // Remove sale and corresponding cash flow entry
+    const updatedSales = currentClinic.sales.filter((sale) => sale.id !== saleId);
+    const updatedCashFlow = currentClinic.cashFlow.filter(
+      (cash) => !(cash.description === `Venta de ${targetSale.product}` && cash.amount === targetSale.total && cash.date === targetSale.date),
+    );
+
+    const updatedClinics = appData.clinics.map((clinic) => {
+      if (clinic.id !== currentClinic.id) return clinic;
+      return {
+        ...clinic,
+        inventory: updatedInventory,
+        sales: updatedSales,
+        cashFlow: updatedCashFlow,
+      };
+    });
+
+    const nextState: AppState = { ...appData, clinics: updatedClinics };
+    setAppData(nextState);
+
+    try {
+      await saveAppState(nextState);
+      showToast(`Venta eliminada y stock restaurado (+${targetSale.qty} ud) 🔄`, 'info');
+    } catch {
+      showToast('Venta eliminada localmente', 'info');
+    }
+  };
+
+  // Export Inventory CSV
+  const exportInventoryToCSV = () => {
+    if (!currentClinic || !currentClinic.inventory.length) {
+      showToast('No hay productos registrados para exportar', 'error');
+      return;
+    }
+
+    const headers = ['ID', 'Nombre', 'Categoria', 'Stock', 'Stock Minimo', 'Costo (COP)', 'Precio (COP)', 'Fecha Vencimiento'];
+    const rows = currentClinic.inventory.map((item) => [
+      item.id,
+      `"${item.name.replace(/"/g, '""')}"`,
+      `"${item.category.replace(/"/g, '""')}"`,
+      item.stock,
+      item.minStock,
+      item.cost,
+      item.price,
+      item.expirationDate || 'N/A',
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Inventario_${currentClinic.name.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Inventario exportado a CSV 📊', 'success');
+  };
+
+  // Export Sales CSV
+  const exportSalesToCSV = () => {
+    if (!currentClinic || !currentClinic.sales.length) {
+      showToast('No hay ventas registradas para exportar', 'error');
+      return;
+    }
+
+    const headers = ['ID Venta', 'Producto', 'Cantidad', 'Cliente', 'Total (COP)', 'Fecha'];
+    const rows = currentClinic.sales.map((sale) => [
+      sale.id,
+      `"${sale.product.replace(/"/g, '""')}"`,
+      sale.qty,
+      `"${sale.client.replace(/"/g, '""')}"`,
+      sale.total,
+      sale.date,
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `Ventas_${currentClinic.name.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Historial de ventas exportado a CSV 📊', 'success');
   };
 
   const signOut = () => {
@@ -620,14 +908,172 @@ export default function HomePage() {
     writeSessionCookie(null);
   };
 
+  const renderProductForm = (inModal = false) => (
+    <form className="stack-form" onSubmit={handleSaveProduct}>
+      <label>
+        <span>Nombre del producto *</span>
+        <input
+          value={productForm.name}
+          onChange={(event) => updateProductFormField('name', event.target.value)}
+          placeholder="Ej. Vacuna Rabia Canina 10ml"
+          required
+        />
+      </label>
+
+      <label>
+        <span>Foto del producto</span>
+        <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => productCameraInputRef.current?.click()}
+              style={{ flex: 1, minWidth: 120 }}
+            >
+              📷 Tomar foto
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => productFileInputRef.current?.click()}
+              style={{ flex: 1, minWidth: 120 }}
+            >
+              📁 Subir archivo
+            </button>
+          </div>
+          <input
+            ref={productCameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleProductImageChange}
+            style={{ display: 'none' }}
+          />
+          <input
+            ref={productFileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleProductImageChange}
+            style={{ display: 'none' }}
+          />
+        </div>
+      </label>
+
+      {productForm.image ? (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <img
+            src={productForm.image}
+            alt="Preview del producto"
+            style={{ width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: 14, border: '1px solid var(--line)' }}
+          />
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setProductForm((current) => ({ ...current, image: '' }))}
+            style={{ width: 'fit-content' }}
+          >
+            Quitar foto
+          </button>
+        </div>
+      ) : null}
+
+      <label>
+        <span>Categoría</span>
+        <input
+          value={productForm.category}
+          onChange={(event) => updateProductFormField('category', event.target.value)}
+          placeholder="Ej. Vacunas, Antibióticos, Alimentos"
+        />
+      </label>
+
+      <div className="inline-inputs">
+        <label>
+          <span>Stock actual</span>
+          <input
+            type="number"
+            min={0}
+            value={productForm.stock}
+            onChange={(event) => updateProductFormField('stock', event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Stock mínimo</span>
+          <input
+            type="number"
+            min={0}
+            value={productForm.minStock}
+            onChange={(event) => updateProductFormField('minStock', event.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="inline-inputs">
+        <label>
+          <span>Costo (COP)</span>
+          <input
+            type="number"
+            min={0}
+            value={productForm.cost}
+            onChange={(event) => updateProductFormField('cost', event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Precio venta (COP)</span>
+          <input
+            type="number"
+            min={0}
+            value={productForm.price}
+            onChange={(event) => updateProductFormField('price', event.target.value)}
+          />
+        </label>
+      </div>
+
+      <label>
+        <span>Fecha de vencimiento (Opcional)</span>
+        <input
+          type="date"
+          value={productForm.expirationDate}
+          onChange={(event) => updateProductFormField('expirationDate', event.target.value)}
+        />
+      </label>
+
+      <div className="buttons-row" style={{ marginTop: 10 }}>
+        <button className="primary-button" type="submit">
+          {editingProductId ? 'Actualizar producto' : 'Guardar producto'}
+        </button>
+        {inModal || editingProductId ? (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => {
+              setEditingProductId(null);
+              setProductForm(emptyProductForm);
+              setIsProductModalOpen(false);
+            }}
+          >
+            Cancelar
+          </button>
+        ) : null}
+      </div>
+    </form>
+  );
+
   if (!session) {
     return (
       <main className="auth-page">
+        {toast && (
+          <div className="toast-container">
+            <div className={`toast ${toast.type}`}>
+              <span>{toast.message}</span>
+            </div>
+          </div>
+        )}
+
         <div className="auth-card">
           <div className="brand-block">
             <div className="brand-mark">V</div>
             <div>
-              <p className="label-muted">Sistema de gestión veterinary</p>
+              <p className="label-muted">Sistema de gestión veterinaria</p>
               <h1>VetStock</h1>
             </div>
           </div>
@@ -661,6 +1107,14 @@ export default function HomePage() {
 
     return (
       <main className="app-shell">
+        {toast && (
+          <div className="toast-container">
+            <div className={`toast ${toast.type}`}>
+              <span>{toast.message}</span>
+            </div>
+          </div>
+        )}
+
         <header className="app-header">
           <div className="brand-logo-wrap">
             <div className="brand-logo">V</div>
@@ -810,6 +1264,15 @@ export default function HomePage() {
 
   return (
     <main className="app-shell">
+      {/* Dynamic Toast Banner */}
+      {toast && (
+        <div className="toast-container">
+          <div className={`toast ${toast.type}`}>
+            <span>{toast.message}</span>
+          </div>
+        </div>
+      )}
+
       <header className="app-header">
         <div className="brand-logo-wrap">
           <div className="brand-logo">V</div>
@@ -821,7 +1284,7 @@ export default function HomePage() {
         <button className="secondary-button" onClick={signOut} type="button">Cerrar sesión</button>
       </header>
 
-      <nav className="tab-nav" aria-label="Modulos de la aplicación">
+      <nav className="tab-nav" aria-label="Módulos de la aplicación">
         {tabs.map((tab) => (
           <button key={tab} type="button" className={activeTab === tab ? 'tab active' : 'tab'} onClick={() => setActiveTab(tab)}>
             {tab}
@@ -835,7 +1298,7 @@ export default function HomePage() {
           <strong>{currentClinic?.inventory.length ?? 0}</strong>
         </article>
         <article className="stat-card">
-          <span>Inventario</span>
+          <span>Valor Inventario</span>
           <strong>{formatCurrency(totalInventoryValue)}</strong>
         </article>
         <article className="stat-card">
@@ -857,26 +1320,26 @@ export default function HomePage() {
 
             <div className="kpi-grid">
               <div className="mini-metric accent-blue">
-                <span>Ventas</span>
+                <span>Ventas Totales</span>
                 <strong>{formatCurrency(totalMonthlySales)}</strong>
-                <small>+12.4% vs mes anterior</small>
+                <small>Ingresos acumulados</small>
               </div>
               <div className="mini-metric accent-green">
-                <span>Compras</span>
-                <strong>{formatCurrency(totalPurchases)}</strong>
-                <small>Estables</small>
+                <span>Ganancia Est.</span>
+                <strong>{formatCurrency(estimatedGrossProfit)}</strong>
+                <small>Margen bruto estimado</small>
               </div>
               <div className="mini-metric accent-amber">
                 <span>Saldo caja</span>
                 <strong>{formatCurrency(cashBalance)}</strong>
-                <small>{lowStockItems.length} productos con stock bajo</small>
+                <small>{lowStockItems.length} bajos • {expiringSoonItems.length} vencimientos</small>
               </div>
             </div>
 
             <div className="chart-box">
               <div className="chart-header">
                 <h3>Últimas ventas</h3>
-                <span className="tag-chip neutral">Este mes</span>
+                <span className="tag-chip neutral">Recientes</span>
               </div>
               <div className="bars">
                 {currentClinic?.sales.slice(0, 5).map((sale, index) => (
@@ -890,20 +1353,30 @@ export default function HomePage() {
 
           <div className="panel">
             <div className="section-head">
-              <h2>Alertas</h2>
-              <span className="tag-chip neutral">{lowStockItems.length} pendientes</span>
+              <h2>Alertas de Inventario</h2>
+              <span className="tag-chip neutral">{lowStockItems.length + expiringSoonItems.length} avisos</span>
             </div>
-            <div className="alert-list">
-              {lowStockItems.length > 0 ? (
-                lowStockItems.map((item) => (
-                  <div key={item.id} className="alert-item">
-                    <strong>{item.name}</strong>
-                    <span>Stock bajo: {item.stock} / mínimo {item.minStock}</span>
+
+            <div className="alert-list" style={{ marginTop: 12 }}>
+              {expiringSoonItems.length > 0 && (
+                expiringSoonItems.map((item) => (
+                  <div key={`exp-${item.id}`} className="alert-item" style={{ background: '#fff5f5', borderColor: '#fca5a5' }}>
+                    <strong style={{ color: '#b91c1c' }}>⏳ Próximo a vencer: {item.name}</strong>
+                    <span>Vence el: {item.expirationDate} (Stock: {item.stock})</span>
                   </div>
                 ))
-              ) : (
-                <p className="muted-text">No hay alertas de stock bajo.</p>
               )}
+
+              {lowStockItems.length > 0 ? (
+                lowStockItems.map((item) => (
+                  <div key={`stock-${item.id}`} className="alert-item">
+                    <strong>⚠️ Stock bajo: {item.name}</strong>
+                    <span>Stock actual: {item.stock} / mínimo {item.minStock}</span>
+                  </div>
+                ))
+              ) : expiringSoonItems.length === 0 ? (
+                <p className="muted-text">No hay alertas de stock ni vencimiento. 👍</p>
+              ) : null}
             </div>
 
             <div className="sales-list-wrap">
@@ -929,7 +1402,55 @@ export default function HomePage() {
       {activeTab === 'Inventario' && (
         <section className="clinic-grid">
           <div className="panel tall-panel">
-            <h2>Inventario</h2>
+            <div className="section-head" style={{ marginBottom: 16 }}>
+              <h2>Inventario</h2>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={exportInventoryToCSV}
+                  style={{ width: 'auto', padding: '10px 14px', fontSize: '0.88rem' }}
+                >
+                  📊 Exportar CSV
+                </button>
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={openNewProductModal}
+                  style={{ width: 'auto', padding: '10px 16px', fontSize: '0.88rem' }}
+                >
+                  + Nuevo producto
+                </button>
+              </div>
+            </div>
+
+            {/* Search & Filter Controls */}
+            <div className="toolbar-wrap">
+              <div className="search-input-wrap">
+                <span className="search-icon">🔍</span>
+                <input
+                  type="text"
+                  placeholder="Buscar producto o categoría..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+
+              {availableCategories.length > 0 && (
+                <select
+                  className="category-filter"
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                >
+                  <option value="">Todas las categorías</option>
+                  {availableCategories.map((cat) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Desktop Table View */}
             <div className="table-wrap">
               <table>
                 <thead>
@@ -941,12 +1462,13 @@ export default function HomePage() {
                     <th>Min</th>
                     <th>Precio</th>
                     <th>Costo</th>
+                    <th>Vencimiento</th>
                     <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {currentClinic?.inventory.length ? (
-                    currentClinic.inventory.map((item) => (
+                  {filteredInventory.length ? (
+                    filteredInventory.map((item) => (
                       <tr key={item.id} className={item.stock <= item.minStock ? 'warning-row' : ''}>
                         <td>
                           {item.image ? (
@@ -957,12 +1479,25 @@ export default function HomePage() {
                             </span>
                           )}
                         </td>
-                        <td>{item.name}</td>
+                        <td><strong>{item.name}</strong></td>
                         <td>{item.category}</td>
-                        <td>{item.stock}</td>
+                        <td>
+                          <span className={`stock-badge ${item.stock === 0 ? 'out' : item.stock <= item.minStock ? 'low' : 'normal'}`}>
+                            {item.stock}
+                          </span>
+                        </td>
                         <td>{item.minStock}</td>
                         <td>{formatCurrency(item.price)}</td>
                         <td>{formatCurrency(item.cost)}</td>
+                        <td>
+                          {item.expirationDate ? (
+                            <span style={{ fontSize: '0.85rem', color: new Date(item.expirationDate) <= new Date() ? '#dc2626' : 'var(--text)' }}>
+                              {item.expirationDate}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--muted)', fontSize: '0.82rem' }}>—</span>
+                          )}
+                        </td>
                         <td>
                           <div className="row-actions">
                             <button type="button" className="tiny-button edit" onClick={() => handleEditProduct(item)}>Editar</button>
@@ -973,90 +1508,77 @@ export default function HomePage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={8} className="empty-state">Todavía no hay productos registrados.</td>
+                      <td colSpan={9} className="empty-state">
+                        {searchQuery || categoryFilter ? 'No se encontraron productos con esos filtros.' : 'Todavía no hay productos registrados.'}
+                      </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
+
+            {/* Mobile Cards View (<768px) */}
+            <div className="mobile-card-grid">
+              {filteredInventory.length ? (
+                filteredInventory.map((item) => (
+                  <div key={item.id} className="product-card">
+                    <div className="product-card-top">
+                      {item.image ? (
+                        <img src={item.image} alt={item.name} className="product-card-img" />
+                      ) : (
+                        <div className="product-card-avatar">{item.name.slice(0, 1).toUpperCase()}</div>
+                      )}
+                      <div className="product-card-meta">
+                        <h4 className="product-card-title">{item.name}</h4>
+                        <div className="product-card-category">{item.category}</div>
+                        {item.expirationDate && (
+                          <small style={{ color: '#d97706', display: 'block', marginTop: 2 }}>
+                            ⏳ Vence: {item.expirationDate}
+                          </small>
+                        )}
+                      </div>
+                      <span className={`stock-badge ${item.stock === 0 ? 'out' : item.stock <= item.minStock ? 'low' : 'normal'}`}>
+                        {item.stock <= item.minStock ? '⚠️ ' : ''}{item.stock} en stock
+                      </span>
+                    </div>
+
+                    <div className="product-card-metrics">
+                      <div className="metric-pill">
+                        <span>Precio</span>
+                        <strong>{formatCurrency(item.price)}</strong>
+                      </div>
+                      <div className="metric-pill">
+                        <span>Costo</span>
+                        <strong>{formatCurrency(item.cost)}</strong>
+                      </div>
+                      <div className="metric-pill">
+                        <span>Mínimo</span>
+                        <strong>{item.minStock}</strong>
+                      </div>
+                    </div>
+
+                    <div className="product-card-actions">
+                      <button type="button" className="secondary-button" onClick={() => handleEditProduct(item)}>
+                        ✏️ Editar
+                      </button>
+                      <button type="button" className="secondary-button" style={{ color: '#b91c1c' }} onClick={() => handleDeleteProduct(item.id)}>
+                        🗑️ Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state">
+                  {searchQuery || categoryFilter ? 'No se encontraron productos con esos filtros.' : 'Todavía no hay productos registrados.'}
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="panel">
+          {/* Desktop Form Panel */}
+          <div className="panel desktop-form-panel">
             <h2>{editingProductId ? 'Editar producto' : 'Agregar producto'}</h2>
-            <form className="stack-form" onSubmit={handleSaveProduct}>
-              <label>
-                <span>Nombre</span>
-                <input value={productForm.name} onChange={(event) => updateProductFormField('name', event.target.value)} placeholder="Vitaminas para perros" />
-              </label>
-              <label>
-                <span>Foto del producto</span>
-                <div style={{ display: 'grid', gap: 10 }}>
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                    <button type="button" className="secondary-button" onClick={() => productCameraInputRef.current?.click()}>
-                      Tomar foto
-                    </button>
-                    <button type="button" className="secondary-button" onClick={() => productFileInputRef.current?.click()}>
-                      Subir archivo
-                    </button>
-                  </div>
-                  <input ref={productCameraInputRef} type="file" accept="image/*" capture="user" onChange={handleProductImageChange} style={{ display: 'none' }} />
-                  <input ref={productFileInputRef} type="file" accept="image/*" onChange={handleProductImageChange} style={{ display: 'none' }} />
-                </div>
-              </label>
-              <small className="muted-text">La cámara aparece en dispositivos móviles; en desktop se usa la opción de archivo.</small>
-              {productForm.image ? (
-                <div style={{ display: 'grid', gap: 8 }}>
-                  <img src={productForm.image} alt="Preview del producto" style={{ width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: 12, border: '1px solid rgba(118,147,204,0.2)' }} />
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => setProductForm((current) => ({ ...current, image: '' }))}
-                    style={{ width: 'fit-content' }}
-                  >
-                    Quitar foto
-                  </button>
-                </div>
-              ) : null}
-              <label>
-                <span>Categoría</span>
-                <input value={productForm.category} onChange={(event) => updateProductFormField('category', event.target.value)} placeholder="Medicamentos" />
-              </label>
-              <div className="inline-inputs">
-                <label>
-                  <span>Stock</span>
-                  <input type="number" min={0} value={productForm.stock} onChange={(event) => updateProductFormField('stock', event.target.value)} />
-                </label>
-                <label>
-                  <span>Mínimo</span>
-                  <input type="number" min={0} value={productForm.minStock} onChange={(event) => updateProductFormField('minStock', event.target.value)} />
-                </label>
-              </div>
-              <div className="inline-inputs">
-                <label>
-                  <span>Costo</span>
-                  <input type="number" min={0} value={productForm.cost} onChange={(event) => updateProductFormField('cost', event.target.value)} />
-                </label>
-                <label>
-                  <span>Precio</span>
-                  <input type="number" min={0} value={productForm.price} onChange={(event) => updateProductFormField('price', event.target.value)} />
-                </label>
-              </div>
-              <div className="inline-inputs buttons-row">
-                <button className="primary-button" type="submit">{editingProductId ? 'Actualizar' : 'Guardar producto'}</button>
-                {editingProductId ? (
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => {
-                      setEditingProductId(null);
-                      setProductForm(emptyProductForm);
-                    }}
-                  >
-                    Cancelar
-                  </button>
-                ) : null}
-              </div>
-            </form>
+            {renderProductForm(false)}
           </div>
         </section>
       )}
@@ -1064,7 +1586,19 @@ export default function HomePage() {
       {activeTab === 'Ventas' && (
         <section className="clinic-grid">
           <div className="panel tall-panel">
-            <h2>Ventas</h2>
+            <div className="section-head" style={{ marginBottom: 16 }}>
+              <h2>Ventas registradas</h2>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={exportSalesToCSV}
+                style={{ width: 'auto', padding: '10px 14px', fontSize: '0.88rem' }}
+              >
+                📊 Exportar Ventas CSV
+              </button>
+            </div>
+            
+            {/* Desktop Table View */}
             <div className="table-wrap">
               <table>
                 <thead>
@@ -1074,26 +1608,69 @@ export default function HomePage() {
                     <th>Cliente</th>
                     <th>Total</th>
                     <th>Fecha</th>
+                    <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {currentClinic?.sales.length ? (
                     currentClinic.sales.map((sale) => (
                       <tr key={sale.id}>
-                        <td>{sale.product}</td>
+                        <td><strong>{sale.product}</strong></td>
                         <td>{sale.qty}</td>
                         <td>{sale.client}</td>
                         <td>{formatCurrency(sale.total)}</td>
                         <td>{sale.date}</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="tiny-button delete"
+                            onClick={() => handleDeleteSale(sale.id)}
+                            title="Eliminar venta y devolver stock"
+                          >
+                            Eliminar
+                          </button>
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="empty-state">Todavía no hay ventas registradas.</td>
+                      <td colSpan={6} className="empty-state">Todavía no hay ventas registradas.</td>
                     </tr>
                   )}
                 </tbody>
               </table>
+            </div>
+
+            {/* Mobile Sales List */}
+            <div className="mobile-card-grid">
+              {currentClinic?.sales.length ? (
+                currentClinic.sales.map((sale) => (
+                  <div key={sale.id} className="product-card">
+                    <div className="product-card-top">
+                      <div className="product-card-avatar" style={{ background: '#e0f2fe', color: '#0369a1' }}>🛒</div>
+                      <div className="product-card-meta">
+                        <h4 className="product-card-title">{sale.product}</h4>
+                        <div className="product-card-category">Cliente: {sale.client} • {sale.date}</div>
+                      </div>
+                      <strong>{formatCurrency(sale.total)}</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                      <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
+                        Cantidad: <strong>{sale.qty} ud(s)</strong>
+                      </span>
+                      <button
+                        type="button"
+                        className="tiny-button delete"
+                        onClick={() => handleDeleteSale(sale.id)}
+                      >
+                        🗑️ Eliminar venta
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="empty-state">Todavía no hay ventas registradas.</div>
+              )}
             </div>
           </div>
 
@@ -1101,29 +1678,76 @@ export default function HomePage() {
             <h2>Registrar venta</h2>
             <form className="stack-form" onSubmit={handleAddSale}>
               <label>
-                <span>Producto</span>
-                <select value={saleForm.productId} onChange={(event) => setSaleForm({ ...saleForm, productId: event.target.value })}>
+                <span>Producto *</span>
+                <select
+                  value={saleForm.productId}
+                  onChange={(event) => setSaleForm({ ...saleForm, productId: event.target.value })}
+                  required
+                >
                   <option value="">Selecciona un producto</option>
                   {currentClinic?.inventory.map((item) => (
-                    <option key={item.id} value={item.id}>{item.name}</option>
+                    <option key={item.id} value={item.id} disabled={item.stock === 0}>
+                      {item.name} ({item.stock} en stock) - {formatCurrency(item.price)}
+                    </option>
                   ))}
                 </select>
               </label>
 
               <label>
                 <span>Cliente</span>
-                <input value={saleForm.clientName} onChange={(event) => setSaleForm({ ...saleForm, clientName: event.target.value })} placeholder="Cliente general" />
+                <input
+                  value={saleForm.clientName}
+                  onChange={(event) => setSaleForm({ ...saleForm, clientName: event.target.value })}
+                  placeholder="Ej. Juan Pérez (o dejar Cliente General)"
+                />
               </label>
 
               <label>
                 <span>Cantidad</span>
-                <input type="number" min={1} value={saleForm.quantity} onChange={(event) => setSaleForm({ ...saleForm, quantity: event.target.value })} />
+                <input
+                  type="number"
+                  min={1}
+                  value={saleForm.quantity}
+                  onChange={(event) => setSaleForm({ ...saleForm, quantity: event.target.value })}
+                  required
+                />
               </label>
 
-              <button className="primary-button" type="submit">Guardar venta</button>
+              <button className="primary-button" type="submit">Registrar venta</button>
             </form>
           </div>
         </section>
+      )}
+
+      {/* Floating Action Button for Mobile (+ Nuevo producto) */}
+      {activeTab === 'Inventario' && (
+        <button
+          type="button"
+          className="mobile-fab-btn"
+          onClick={openNewProductModal}
+          aria-label="Agregar producto"
+        >
+          <span>➕</span> Nuevo Producto
+        </button>
+      )}
+
+      {/* Mobile Drawer / Modal Overlay */}
+      {isProductModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsProductModalOpen(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{editingProductId ? 'Editar producto' : 'Agregar nuevo producto'}</h3>
+              <button
+                type="button"
+                className="close-modal-btn"
+                onClick={() => setIsProductModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            {renderProductForm(true)}
+          </div>
+        </div>
       )}
     </main>
   );
