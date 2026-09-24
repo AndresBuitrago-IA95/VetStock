@@ -442,6 +442,13 @@ export default function HomePage() {
     setClinicPasswordMessage('Contraseña actualizada para la veterinaria.');
   };
 
+  const updateProductFormField = (field: keyof typeof emptyProductForm, value: string) => {
+    setProductForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  };
+
   const handleProductImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -979,7 +986,7 @@ export default function HomePage() {
             <form className="stack-form" onSubmit={handleSaveProduct}>
               <label>
                 <span>Nombre</span>
-                <input value={productForm.name} onChange={(event) => setProductForm({ ...productForm, name: event.target.value })} placeholder="Vitaminas para perros" />
+                <input value={productForm.name} onChange={(event) => updateProductFormField('name', event.target.value)} placeholder="Vitaminas para perros" />
               </label>
               <label>
                 <span>Foto del producto</span>
@@ -1012,26 +1019,26 @@ export default function HomePage() {
               ) : null}
               <label>
                 <span>Categoría</span>
-                <input value={productForm.category} onChange={(event) => setProductForm({ ...productForm, category: event.target.value })} placeholder="Medicamentos" />
+                <input value={productForm.category} onChange={(event) => updateProductFormField('category', event.target.value)} placeholder="Medicamentos" />
               </label>
               <div className="inline-inputs">
                 <label>
                   <span>Stock</span>
-                  <input type="number" min={0} value={productForm.stock} onChange={(event) => setProductForm({ ...productForm, stock: event.target.value })} />
+                  <input type="number" min={0} value={productForm.stock} onChange={(event) => updateProductFormField('stock', event.target.value)} />
                 </label>
                 <label>
                   <span>Mínimo</span>
-                  <input type="number" min={0} value={productForm.minStock} onChange={(event) => setProductForm({ ...productForm, minStock: event.target.value })} />
+                  <input type="number" min={0} value={productForm.minStock} onChange={(event) => updateProductFormField('minStock', event.target.value)} />
                 </label>
               </div>
               <div className="inline-inputs">
                 <label>
                   <span>Costo</span>
-                  <input type="number" min={0} value={productForm.cost} onChange={(event) => setProductForm({ ...productForm, cost: event.target.value })} />
+                  <input type="number" min={0} value={productForm.cost} onChange={(event) => updateProductFormField('cost', event.target.value)} />
                 </label>
                 <label>
                   <span>Precio</span>
-                  <input type="number" min={0} value={productForm.price} onChange={(event) => setProductForm({ ...productForm, price: event.target.value })} />
+                  <input type="number" min={0} value={productForm.price} onChange={(event) => updateProductFormField('price', event.target.value)} />
                 </label>
               </div>
               <div className="inline-inputs buttons-row">
