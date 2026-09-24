@@ -94,6 +94,7 @@ type Session = {
 };
 
 type AppState = {
+  updatedAt?: number;
   superAdmin: SuperAdmin;
   clinics: Clinic[];
 };
@@ -107,10 +108,11 @@ type ToastNotification = {
 };
 
 const SESSION_COOKIE_NAME = 'vetstock-session';
-const LOCAL_STORAGE_KEY = 'vetstock-app-state';
+const LOCAL_STORAGE_KEY = 'vetstock-app-state-v2';
 const POLL_INTERVAL_MS = 2500;
 
 const defaultData: AppState = {
+  updatedAt: 1,
   superAdmin: {
     id: 'superadmin-1',
     name: 'Super Admin',
@@ -174,7 +176,9 @@ function readLocalStorageState(): AppState | null {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as AppState;
+    const parsed = JSON.parse(raw) as AppState;
+    if (parsed && Array.isArray(parsed.clinics)) return parsed;
+    return null;
   } catch {
     return null;
   }
@@ -190,37 +194,61 @@ function writeLocalStorageState(data: AppState) {
 }
 
 async function loadAppState(): Promise<AppState> {
+  const localData = readLocalStorageState();
+
   try {
-    const response = await fetch('/api/state', { cache: 'no-store' });
+    const response = await fetch(`/api/state?t=${Date.now()}`, { cache: 'no-store' });
     if (!response.ok) {
-      return readLocalStorageState() || defaultData;
+      return localData || defaultData;
     }
-    const data = (await response.json()) as AppState;
-    if (data && Array.isArray(data.clinics)) {
-      writeLocalStorageState(data);
-      return data;
+    const serverData = (await response.json()) as AppState;
+    if (serverData && Array.isArray(serverData.clinics)) {
+      // Conflict resolution: if local data is newer than server data, use local data and sync to server
+      if (localData && localData.updatedAt && (!serverData.updatedAt || localData.updatedAt > serverData.updatedAt)) {
+        // Sync newer local state to server in background
+        fetch('/api/state', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(localData),
+        }).catch(console.error);
+        return localData;
+      }
+      writeLocalStorageState(serverData);
+      return serverData;
     }
-    return readLocalStorageState() || defaultData;
+    return localData || defaultData;
   } catch {
-    return readLocalStorageState() || defaultData;
+    return localData || defaultData;
   }
 }
 
-async function saveAppState(data: AppState) {
-  writeLocalStorageState(data);
+async function syncStateToServer(data: AppState): Promise<AppState> {
+  const stampedData = {
+    ...data,
+    updatedAt: Date.now(),
+  };
 
-  const response = await fetch('/api/state', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
+  writeLocalStorageState(stampedData);
 
-  if (!response.ok) {
-    const errPayload = await response.json().catch(() => ({}));
-    throw new Error(errPayload.error || 'No se pudo guardar el estado en el servidor');
+  try {
+    const response = await fetch('/api/state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(stampedData),
+    });
+
+    if (!response.ok) {
+      console.warn('Server PUT response not ok:', response.status);
+      return stampedData;
+    }
+
+    const serverResult = (await response.json()) as AppState;
+    writeLocalStorageState(serverResult);
+    return serverResult;
+  } catch (err) {
+    console.warn('Server save failed, using local storage state:', err);
+    return stampedData;
   }
-
-  return (await response.json()) as AppState;
 }
 
 function formatCurrency(value: number) {
@@ -254,6 +282,9 @@ export default function HomePage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
+  // Lock polling while client is mutating state
+  const isSavingRef = useRef(false);
+
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -271,18 +302,36 @@ export default function HomePage() {
     }, 3500);
   };
 
+  const updateStateAndSync = async (nextState: AppState) => {
+    isSavingRef.current = true;
+    setAppData(nextState);
+    const finalState = await syncStateToServer(nextState);
+    setAppData(finalState);
+
+    // Keep saving lock for 3 seconds to prevent race condition polling overwrites
+    setTimeout(() => {
+      isSavingRef.current = false;
+    }, 3000);
+  };
+
   useEffect(() => {
-    const syncState = async () => {
+    const syncInitial = async () => {
       const nextData = await loadAppState();
       setAppData(nextData);
       setSession(readSessionCookie());
     };
 
-    syncState();
+    syncInitial();
 
     const intervalId = window.setInterval(async () => {
+      if (isSavingRef.current) return; // Skip polling if client is currently saving
+
       const nextData = await loadAppState();
       setAppData((previous) => {
+        // Never overwrite if previous state has a newer timestamp than fetched server data
+        if (previous.updatedAt && nextData.updatedAt && previous.updatedAt > nextData.updatedAt) {
+          return previous;
+        }
         const equal = JSON.stringify(previous) === JSON.stringify(nextData);
         return equal ? previous : nextData;
       });
@@ -398,10 +447,9 @@ export default function HomePage() {
     } catch (err) {
       console.error('Camera access error:', err);
       if (mode === 'environment') {
-        // Fallback to front camera (or PC webcam)
         startCamera('user');
       } else {
-        showToast('No se pudo abrir la cámara. Selecciona una foto desde archivo.', 'error');
+        showToast('No se pudo acceder a la cámara. Usa la opción de subir archivo.', 'error');
       }
     }
   };
@@ -439,7 +487,7 @@ export default function HomePage() {
     setIsCameraModalOpen(false);
   };
 
-  // Ultra-efficient ObjectURL image processing (Prevents mobile RAM crashes)
+  // ObjectURL Image Processing
   const handleProductImageChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -567,15 +615,9 @@ export default function HomePage() {
         ];
 
     const nextState = { ...appData, clinics: nextClinics };
-    setAppData(nextState);
-
-    try {
-      await saveAppState(nextState);
-      showToast(editingClinicId ? 'Veterinaria actualizada' : 'Veterinaria guardada correctamente');
-      resetClinicForm();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Error al guardar veterinaria', 'error');
-    }
+    await updateStateAndSync(nextState);
+    showToast(editingClinicId ? 'Veterinaria actualizada' : 'Veterinaria guardada correctamente');
+    resetClinicForm();
   };
 
   const handleEditClinic = (clinic: Clinic) => {
@@ -600,16 +642,10 @@ export default function HomePage() {
       ...appData,
       clinics: appData.clinics.filter((clinic) => clinic.id !== clinicId),
     };
-    setAppData(nextState);
-
-    try {
-      await saveAppState(nextState);
-      showToast('Veterinaria eliminada', 'info');
-      if (editingClinicId === clinicId) {
-        resetClinicForm();
-      }
-    } catch (err) {
-      showToast('Error al eliminar veterinaria', 'error');
+    await updateStateAndSync(nextState);
+    showToast('Veterinaria eliminada', 'info');
+    if (editingClinicId === clinicId) {
+      resetClinicForm();
     }
   };
 
@@ -639,15 +675,10 @@ export default function HomePage() {
       },
     };
 
-    setAppData(nextState);
-    try {
-      await saveAppState(nextState);
-      setSuperAdminPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      setSuperAdminPasswordMessage('');
-      showToast('Contraseña de superadmin actualizada correctamente');
-    } catch {
-      setSuperAdminPasswordMessage('Error al actualizar la contraseña');
-    }
+    await updateStateAndSync(nextState);
+    setSuperAdminPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    setSuperAdminPasswordMessage('');
+    showToast('Contraseña de superadmin actualizada correctamente');
   };
 
   const handleUpdateClinicPassword = async (event: FormEvent<HTMLFormElement>) => {
@@ -674,15 +705,10 @@ export default function HomePage() {
       ),
     };
 
-    setAppData(nextState);
-    try {
-      await saveAppState(nextState);
-      setClinicPasswordForm({ clinicId: '', newPassword: '', confirmPassword: '' });
-      setClinicPasswordMessage('');
-      showToast('Contraseña de veterinaria actualizada');
-    } catch {
-      setClinicPasswordMessage('Error al actualizar la contraseña');
-    }
+    await updateStateAndSync(nextState);
+    setClinicPasswordForm({ clinicId: '', newPassword: '', confirmPassword: '' });
+    setClinicPasswordMessage('');
+    showToast('Contraseña de veterinaria actualizada');
   };
 
   const updateProductFormField = (field: keyof typeof emptyProductForm, value: string) => {
@@ -735,21 +761,12 @@ export default function HomePage() {
     });
 
     const nextState: AppState = { ...appData, clinics: updatedClinics };
-    setAppData(nextState);
+    await updateStateAndSync(nextState);
 
-    try {
-      await saveAppState(nextState);
-      showToast(editingProductId ? '¡Producto actualizado! 🐾' : '¡Producto guardado exitosamente! 🐾', 'success');
-      setProductForm(emptyProductForm);
-      setEditingProductId(null);
-      setIsProductModalOpen(false);
-    } catch (err) {
-      console.error('Error saving product:', err);
-      showToast('Guardado localmente. (Error de red)', 'info');
-      setProductForm(emptyProductForm);
-      setEditingProductId(null);
-      setIsProductModalOpen(false);
-    }
+    showToast(editingProductId ? '¡Producto actualizado! 🐾' : '¡Producto guardado exitosamente! 🐾', 'success');
+    setProductForm(emptyProductForm);
+    setEditingProductId(null);
+    setIsProductModalOpen(false);
   };
 
   const openNewProductModal = () => {
@@ -786,19 +803,13 @@ export default function HomePage() {
     });
 
     const nextState: AppState = { ...appData, clinics: updatedClinics };
-    setAppData(nextState);
+    await updateStateAndSync(nextState);
+    showToast('Producto eliminado', 'info');
 
-    try {
-      await saveAppState(nextState);
-      showToast('Producto eliminado', 'info');
-
-      if (editingProductId === productId) {
-        setEditingProductId(null);
-        setProductForm(emptyProductForm);
-        setIsProductModalOpen(false);
-      }
-    } catch (err) {
-      showToast('Error al eliminar producto', 'error');
+    if (editingProductId === productId) {
+      setEditingProductId(null);
+      setProductForm(emptyProductForm);
+      setIsProductModalOpen(false);
     }
   };
 
@@ -859,16 +870,9 @@ export default function HomePage() {
     });
 
     const nextState: AppState = { ...appData, clinics: updatedClinics };
-    setAppData(nextState);
-
-    try {
-      await saveAppState(nextState);
-      showToast(`¡Venta de ${selectedProduct.name} registrada! 🛒`, 'success');
-      setSaleForm({ productId: '', quantity: '1', clientName: '' });
-    } catch (err) {
-      showToast('Venta guardada localmente', 'info');
-      setSaleForm({ productId: '', quantity: '1', clientName: '' });
-    }
+    await updateStateAndSync(nextState);
+    showToast(`¡Venta de ${selectedProduct.name} registrada! 🛒`, 'success');
+    setSaleForm({ productId: '', quantity: '1', clientName: '' });
   };
 
   // Delete sale and restore inventory stock automatically
@@ -908,14 +912,8 @@ export default function HomePage() {
     });
 
     const nextState: AppState = { ...appData, clinics: updatedClinics };
-    setAppData(nextState);
-
-    try {
-      await saveAppState(nextState);
-      showToast(`Venta eliminada y stock restaurado (+${targetSale.qty} ud) 🔄`, 'info');
-    } catch {
-      showToast('Venta eliminada localmente', 'info');
-    }
+    await updateStateAndSync(nextState);
+    showToast(`Venta eliminada y stock restaurado (+${targetSale.qty} ud) 🔄`, 'info');
   };
 
   // Export Inventory CSV
