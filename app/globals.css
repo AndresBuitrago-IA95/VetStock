@@ -147,7 +147,7 @@ a { text-decoration: none; }
 .auth-form,
 .stack-form {
   display: grid;
-  gap: 16px;
+  gap: 18px;
 }
 
 .auth-form label,
@@ -162,12 +162,15 @@ a { text-decoration: none; }
 .stack-form input,
 .stack-form select {
   width: 100%;
+  min-height: 48px;
   border: 1px solid rgba(113, 140, 188, 0.25);
   border-radius: 14px;
   background: rgba(244, 248, 255, 0.9);
   padding: 13px 14px;
   color: var(--text);
   transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .auth-form input:focus,
@@ -183,10 +186,12 @@ a { text-decoration: none; }
 .tab {
   border: none;
   border-radius: 12px;
-  padding: 12px 18px;
+  padding: 14px 18px;
   font-weight: 700;
   cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+  min-height: 48px;
+  touch-action: manipulation;
 }
 
 .primary-button {
@@ -651,8 +656,8 @@ th {
 
 @media (max-width: 620px) {
   .app-shell {
-    width: min(100% - 14px, 1200px);
-    margin-top: 14px;
+    width: min(100% - 12px, 1200px);
+    margin-top: 12px;
   }
 
   .app-header {
@@ -686,5 +691,20 @@ th {
 
   .tab-nav {
     padding: 8px;
+  }
+
+  .panel,
+  .auth-card {
+    border-radius: 20px;
+  }
+
+  .stack-form,
+  .auth-form {
+    gap: 16px;
+  }
+
+  .buttons-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

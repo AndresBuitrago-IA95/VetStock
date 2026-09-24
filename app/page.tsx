@@ -448,10 +448,40 @@ export default function HomePage() {
 
     const reader = new FileReader();
     reader.onload = () => {
-      const result = typeof reader.result === 'string' ? reader.result : '';
-      setProductForm((current) => ({ ...current, image: result }));
+      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!dataUrl) return;
+
+      const img = new window.Image();
+      img.onload = () => {
+        const maxDimension = 1200;
+        const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
+        const width = Math.max(1, Math.round(img.width * scale));
+        const height = Math.max(1, Math.round(img.height * scale));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const context = canvas.getContext('2d');
+        if (!context) {
+          setProductForm((current) => ({ ...current, image: dataUrl }));
+          return;
+        }
+
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, width, height);
+        context.drawImage(img, 0, 0, width, height);
+
+        setProductForm((current) => ({
+          ...current,
+          image: canvas.toDataURL('image/jpeg', 0.8),
+        }));
+      };
+      img.src = dataUrl;
     };
+
     reader.readAsDataURL(file);
+    event.target.value = '';
   };
 
   const handleSaveProduct = async (event: FormEvent<HTMLFormElement>) => {
@@ -968,8 +998,16 @@ export default function HomePage() {
               </label>
               <small className="muted-text">La cámara aparece en dispositivos móviles; en desktop se usa la opción de archivo.</small>
               {productForm.image ? (
-                <div>
+                <div style={{ display: 'grid', gap: 8 }}>
                   <img src={productForm.image} alt="Preview del producto" style={{ width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: 12, border: '1px solid rgba(118,147,204,0.2)' }} />
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setProductForm((current) => ({ ...current, image: '' }))}
+                    style={{ width: 'fit-content' }}
+                  >
+                    Quitar foto
+                  </button>
                 </div>
               ) : null}
               <label>
