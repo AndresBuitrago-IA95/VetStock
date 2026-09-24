@@ -91,11 +91,13 @@ export type Session = {
 };
 
 export type AppState = {
+  updatedAt?: number;
   superAdmin: SuperAdmin;
   clinics: Clinic[];
 };
 
 export const defaultAppState: AppState = {
+  updatedAt: 1,
   superAdmin: {
     id: 'superadmin-1',
     name: 'Super Admin',
@@ -126,17 +128,29 @@ export function readAppStateFile(): AppState {
       return defaultAppState;
     }
 
-    return JSON.parse(content) as AppState;
+    const parsed = JSON.parse(content) as AppState;
+    if (parsed && typeof parsed === 'object') {
+      if (!parsed.updatedAt) parsed.updatedAt = Date.now();
+      return parsed;
+    }
+
+    return defaultAppState;
   } catch {
     return defaultAppState;
   }
 }
 
-export function writeAppStateFile(data: AppState) {
+export function writeAppStateFile(data: AppState): AppState {
   const filePath = getAppStateFilePath();
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  const stampedData: AppState = {
+    ...data,
+    updatedAt: Date.now(),
+  };
+  fs.writeFileSync(filePath, JSON.stringify(stampedData, null, 2), 'utf8');
+  return stampedData;
 }
+
 
 export function authenticateUser(email: string, password: string, data: AppState): Session | null {
   const normalizedEmail = email.trim().toLowerCase();

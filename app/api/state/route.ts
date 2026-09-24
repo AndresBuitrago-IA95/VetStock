@@ -23,8 +23,8 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Estado inválido: estructura incorrecta' }, { status: 400, headers: NO_CACHE_HEADERS });
     }
 
-    writeAppStateFile(payload);
-    return NextResponse.json(payload, { headers: NO_CACHE_HEADERS });
+    const savedState = writeAppStateFile(payload);
+    return NextResponse.json(savedState, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     console.error('API /api/state Error:', error);
     return NextResponse.json(

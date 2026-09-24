@@ -194,61 +194,43 @@ function writeLocalStorageState(data: AppState) {
 }
 
 async function loadAppState(): Promise<AppState> {
-  const localData = readLocalStorageState();
-
   try {
     const response = await fetch(`/api/state?t=${Date.now()}`, { cache: 'no-store' });
-    if (!response.ok) {
-      return localData || defaultData;
-    }
-    const serverData = (await response.json()) as AppState;
-    if (serverData && Array.isArray(serverData.clinics)) {
-      // Conflict resolution: if local data is newer than server data, use local data and sync to server
-      if (localData && localData.updatedAt && (!serverData.updatedAt || localData.updatedAt > serverData.updatedAt)) {
-        // Sync newer local state to server in background
-        fetch('/api/state', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(localData),
-        }).catch(console.error);
-        return localData;
+    if (response.ok) {
+      const serverData = (await response.json()) as AppState;
+      if (serverData && Array.isArray(serverData.clinics)) {
+        writeLocalStorageState(serverData);
+        return serverData;
       }
-      writeLocalStorageState(serverData);
-      return serverData;
     }
-    return localData || defaultData;
-  } catch {
-    return localData || defaultData;
+  } catch (err) {
+    console.warn('Network error loading server state:', err);
   }
+
+  const localData = readLocalStorageState();
+  return localData || defaultData;
 }
 
 async function syncStateToServer(data: AppState): Promise<AppState> {
-  const stampedData = {
-    ...data,
-    updatedAt: Date.now(),
-  };
-
-  writeLocalStorageState(stampedData);
+  writeLocalStorageState(data);
 
   try {
     const response = await fetch('/api/state', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(stampedData),
+      body: JSON.stringify(data),
     });
 
-    if (!response.ok) {
-      console.warn('Server PUT response not ok:', response.status);
-      return stampedData;
+    if (response.ok) {
+      const serverResult = (await response.json()) as AppState;
+      writeLocalStorageState(serverResult);
+      return serverResult;
     }
-
-    const serverResult = (await response.json()) as AppState;
-    writeLocalStorageState(serverResult);
-    return serverResult;
   } catch (err) {
     console.warn('Server save failed, using local storage state:', err);
-    return stampedData;
   }
+
+  return data;
 }
 
 function formatCurrency(value: number) {
@@ -303,15 +285,27 @@ export default function HomePage() {
   };
 
   const updateStateAndSync = async (nextState: AppState) => {
-    isSavingRef.current = true;
-    setAppData(nextState);
-    const finalState = await syncStateToServer(nextState);
-    setAppData(finalState);
+    const now = Date.now();
+    const stampedState: AppState = {
+      ...nextState,
+      updatedAt: now,
+    };
 
-    // Keep saving lock for 3 seconds to prevent race condition polling overwrites
-    setTimeout(() => {
-      isSavingRef.current = false;
-    }, 3000);
+    isSavingRef.current = true;
+    writeLocalStorageState(stampedState);
+    setAppData(stampedState);
+
+    try {
+      const finalState = await syncStateToServer(stampedState);
+      setAppData(finalState);
+    } catch (err) {
+      console.warn('Sync failed, keeping local state:', err);
+    } finally {
+      // Keep saving lock for 5 seconds to prevent race condition polling overwrites on high latency mobile network
+      setTimeout(() => {
+        isSavingRef.current = false;
+      }, 5000);
+    }
   };
 
   useEffect(() => {
@@ -328,10 +322,7 @@ export default function HomePage() {
 
       const nextData = await loadAppState();
       setAppData((previous) => {
-        // Never overwrite if previous state has a newer timestamp than fetched server data
-        if (previous.updatedAt && nextData.updatedAt && previous.updatedAt > nextData.updatedAt) {
-          return previous;
-        }
+        if (isSavingRef.current) return previous;
         const equal = JSON.stringify(previous) === JSON.stringify(nextData);
         return equal ? previous : nextData;
       });
