@@ -244,10 +244,15 @@ export default function HomePage() {
   
   // Product state
   const [productForm, setProductForm] = useState(emptyProductForm);
-  const productCameraInputRef = useRef<HTMLInputElement | null>(null);
   const productFileInputRef = useRef<HTMLInputElement | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+
+  // WebRTC Camera Modal state (works on PC & Mobile)
+  const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
+  const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('environment');
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -283,7 +288,10 @@ export default function HomePage() {
       });
     }, POLL_INTERVAL_MS);
 
-    return () => window.clearInterval(intervalId);
+    return () => {
+      window.clearInterval(intervalId);
+      stopCamera();
+    };
   }, []);
 
   const currentClinic = useMemo(
@@ -361,6 +369,114 @@ export default function HomePage() {
       return matchesSearch && matchesCategory;
     });
   }, [currentClinic, searchQuery, categoryFilter]);
+
+  // WebRTC Camera Helper Functions
+  const stopCamera = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+  };
+
+  const startCamera = async (mode: 'user' | 'environment' = 'environment') => {
+    stopCamera();
+    try {
+      const constraints: MediaStreamConstraints = {
+        video: { facingMode: mode, width: { ideal: 640 }, height: { ideal: 640 } },
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      cameraStreamRef.current = stream;
+      setCameraFacingMode(mode);
+      setIsCameraModalOpen(true);
+
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(console.error);
+        }
+      }, 150);
+    } catch (err) {
+      console.error('Camera access error:', err);
+      if (mode === 'environment') {
+        // Fallback to front camera (or PC webcam)
+        startCamera('user');
+      } else {
+        showToast('No se pudo abrir la cámara. Selecciona una foto desde archivo.', 'error');
+      }
+    }
+  };
+
+  const switchCameraFacingMode = () => {
+    const nextMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
+    startCamera(nextMode);
+  };
+
+  const capturePhotoFromCamera = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) {
+      showToast('Esperando señal de la cámara...', 'info');
+      return;
+    }
+
+    const maxDimension = 400;
+    const scale = Math.min(1, maxDimension / Math.max(video.videoWidth, video.videoHeight));
+    const width = Math.max(1, Math.round(video.videoWidth * scale));
+    const height = Math.max(1, Math.round(video.videoHeight * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, width, height);
+      const compressedBase64 = canvas.toDataURL('image/jpeg', 0.6);
+      setProductForm((current) => ({ ...current, image: compressedBase64 }));
+      showToast('¡Foto capturada exitosamente! 📸', 'success');
+    }
+
+    stopCamera();
+    setIsCameraModalOpen(false);
+  };
+
+  // Ultra-efficient ObjectURL image processing (Prevents mobile RAM crashes)
+  const handleProductImageChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const objectUrl = URL.createObjectURL(file);
+    const img = new window.Image();
+
+    img.onload = () => {
+      const maxDimension = 400;
+      const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
+      const width = Math.max(1, Math.round(img.width * scale));
+      const height = Math.max(1, Math.round(img.height * scale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+
+      const context = canvas.getContext('2d');
+      if (context) {
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, width, height);
+        context.drawImage(img, 0, 0, width, height);
+        const compressed = canvas.toDataURL('image/jpeg', 0.6);
+        setProductForm((current) => ({ ...current, image: compressed }));
+        showToast('Foto cargada y optimizada 🖼️', 'success');
+      }
+      URL.revokeObjectURL(objectUrl);
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      showToast('Error al leer la imagen seleccionada', 'error');
+    };
+
+    img.src = objectUrl;
+    event.target.value = '';
+  };
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -574,49 +690,6 @@ export default function HomePage() {
       ...current,
       [field]: value,
     }));
-  };
-
-  // High-performance photo compression
-  const handleProductImageChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = typeof reader.result === 'string' ? reader.result : '';
-      if (!dataUrl) return;
-
-      const img = new window.Image();
-      img.onload = () => {
-        const maxDimension = 400;
-        const scale = Math.min(1, maxDimension / Math.max(img.width, img.height));
-        const width = Math.max(1, Math.round(img.width * scale));
-        const height = Math.max(1, Math.round(img.height * scale));
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-
-        const context = canvas.getContext('2d');
-        if (!context) {
-          setProductForm((current) => ({ ...current, image: dataUrl }));
-          return;
-        }
-
-        context.fillStyle = '#ffffff';
-        context.fillRect(0, 0, width, height);
-        context.drawImage(img, 0, 0, width, height);
-
-        setProductForm((current) => ({
-          ...current,
-          image: canvas.toDataURL('image/jpeg', 0.6),
-        }));
-      };
-      img.src = dataUrl;
-    };
-
-    reader.readAsDataURL(file);
-    event.target.value = '';
   };
 
   const handleSaveProduct = async (event: FormEvent<HTMLFormElement>) => {
@@ -927,10 +1000,10 @@ export default function HomePage() {
             <button
               type="button"
               className="secondary-button"
-              onClick={() => productCameraInputRef.current?.click()}
-              style={{ flex: 1, minWidth: 120 }}
+              onClick={() => startCamera('environment')}
+              style={{ flex: 1, minWidth: 130 }}
             >
-              📷 Tomar foto
+              📷 Tomar foto (Cámara/Webcam)
             </button>
             <button
               type="button"
@@ -941,14 +1014,6 @@ export default function HomePage() {
               📁 Subir archivo
             </button>
           </div>
-          <input
-            ref={productCameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleProductImageChange}
-            style={{ display: 'none' }}
-          />
           <input
             ref={productFileInputRef}
             type="file"
@@ -1731,7 +1796,7 @@ export default function HomePage() {
         </button>
       )}
 
-      {/* Mobile Drawer / Modal Overlay */}
+      {/* Mobile Form Drawer / Modal Overlay */}
       {isProductModalOpen && (
         <div className="modal-overlay" onClick={() => setIsProductModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -1746,6 +1811,47 @@ export default function HomePage() {
               </button>
             </div>
             {renderProductForm(true)}
+          </div>
+        </div>
+      )}
+
+      {/* WebRTC Live Camera Modal (PC Webcam & Mobile) */}
+      {isCameraModalOpen && (
+        <div
+          className="camera-modal-overlay"
+          onClick={() => {
+            stopCamera();
+            setIsCameraModalOpen(false);
+          }}
+        >
+          <div className="camera-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="camera-modal-header">
+              <h3>📷 Tomar foto con cámara</h3>
+              <button
+                type="button"
+                className="close-modal-btn"
+                style={{ color: '#ffffff', background: 'rgba(255,255,255,0.1)' }}
+                onClick={() => {
+                  stopCamera();
+                  setIsCameraModalOpen(false);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="camera-preview-box">
+              <video ref={videoRef} className="camera-preview-video" autoPlay playsInline muted />
+            </div>
+
+            <div className="camera-controls">
+              <button type="button" className="primary-button" onClick={capturePhotoFromCamera}>
+                📸 Capturar Foto
+              </button>
+              <button type="button" className="secondary-button" onClick={switchCameraFacingMode}>
+                🔄 Cambiar Cámara
+              </button>
+            </div>
           </div>
         </div>
       )}
