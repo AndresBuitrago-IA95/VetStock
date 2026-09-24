@@ -11,7 +11,7 @@ const NO_CACHE_HEADERS = {
 };
 
 export async function GET() {
-  const state = readAppStateFile();
+  const state = await readAppStateFile();
   return NextResponse.json(state, { headers: NO_CACHE_HEADERS });
 }
 
@@ -23,7 +23,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Estado inválido: estructura incorrecta' }, { status: 400, headers: NO_CACHE_HEADERS });
     }
 
-    const savedState = writeAppStateFile(payload);
+    const savedState = await writeAppStateFile(payload);
     return NextResponse.json(savedState, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     console.error('API /api/state Error:', error);
@@ -33,5 +33,3 @@ export async function PUT(request: NextRequest) {
     );
   }
 }
-
-

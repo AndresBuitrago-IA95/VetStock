@@ -1,5 +1,4 @@
-import fs from 'fs';
-import path from 'path';
+import { Redis } from '@upstash/redis';
 
 export type Product = {
   id: string;
@@ -9,6 +8,8 @@ export type Product = {
   minStock: number;
   cost: number;
   price: number;
+  expirationDate?: string;
+  image?: string;
 };
 
 export type Sale = {
@@ -108,73 +109,60 @@ export const defaultAppState: AppState = {
   clinics: [],
 };
 
+const REDIS_KEY = 'vetstock:appstate';
+
+// In-memory cache: acts as a fast read layer and last-resort fallback
 let memoryCache: AppState | null = null;
 
-export function getAppStateFilePath() {
-  return path.join(process.cwd(), 'data', 'app-state.json');
+function getRedisClient(): Redis | null {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  return new Redis({ url, token });
 }
 
-export function readAppStateFile(): AppState {
-  const filePath = getAppStateFilePath();
+export async function readAppStateFile(): Promise<AppState> {
+  const redis = getRedisClient();
 
-  try {
-    if (!fs.existsSync(filePath)) {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      const initial = memoryCache || defaultAppState;
-      writeAppStateFile(initial);
-      return initial;
+  if (redis) {
+    try {
+      const data = await redis.get<AppState>(REDIS_KEY);
+      if (data && typeof data === 'object' && Array.isArray(data.clinics)) {
+        memoryCache = data as AppState;
+        return memoryCache;
+      }
+    } catch (err) {
+      console.warn('Redis read error, falling back to memory cache:', err);
     }
-
-    const content = fs.readFileSync(filePath, 'utf8');
-    if (!content.trim()) {
-      if (memoryCache) return memoryCache;
-      return defaultAppState;
-    }
-
-    const parsed = JSON.parse(content) as AppState;
-    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.clinics)) {
-      if (!parsed.updatedAt) parsed.updatedAt = Date.now();
-      memoryCache = parsed;
-      return parsed;
-    }
-
-    if (memoryCache) return memoryCache;
-    return defaultAppState;
-  } catch (err) {
-    console.warn('Error reading app state file:', err);
-    if (memoryCache) return memoryCache;
-    return defaultAppState;
   }
+
+  if (memoryCache && Array.isArray(memoryCache.clinics)) {
+    return memoryCache;
+  }
+
+  return defaultAppState;
 }
 
-export function writeAppStateFile(data: AppState): AppState {
-  const filePath = getAppStateFilePath();
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-
+export async function writeAppStateFile(data: AppState): Promise<AppState> {
   const stampedData: AppState = {
     ...data,
     updatedAt: Date.now(),
   };
 
+  // Always update memory cache first so reads are consistent even if Redis is slow
   memoryCache = stampedData;
 
-  const tempFilePath = `${filePath}.${Date.now()}.${Math.random().toString(36).substring(2, 7)}.tmp`;
-  try {
-    fs.writeFileSync(tempFilePath, JSON.stringify(stampedData, null, 2), 'utf8');
-    fs.renameSync(tempFilePath, filePath);
-  } catch (err) {
-    console.error('Atomic file write error:', err);
+  const redis = getRedisClient();
+  if (redis) {
     try {
-      fs.writeFileSync(filePath, JSON.stringify(stampedData, null, 2), 'utf8');
-    } catch {
-      // Memory cache is preserved even if disk write fails
+      await redis.set(REDIS_KEY, JSON.stringify(stampedData));
+    } catch (err) {
+      console.error('Redis write error (data preserved in memory cache):', err);
     }
   }
 
   return stampedData;
 }
-
 
 export function authenticateUser(email: string, password: string, data: AppState): Session | null {
   const normalizedEmail = email.trim().toLowerCase();

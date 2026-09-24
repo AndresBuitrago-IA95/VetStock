@@ -7,7 +7,7 @@ export async function POST(request: NextRequest) {
     const email = payload.email ?? '';
     const password = payload.password ?? '';
 
-    const appState = readAppStateFile();
+    const appState = await readAppStateFile();
     const session = authenticateUser(email, password, appState);
 
     if (!session) {
