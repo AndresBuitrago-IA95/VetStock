@@ -193,12 +193,52 @@ function writeLocalStorageState(data: AppState) {
   }
 }
 
+function updateClinicInState(state: AppState, clinicId: string, updater: (clinic: Clinic) => Clinic): AppState {
+  if (!state || !Array.isArray(state.clinics)) return state;
+
+  const exists = state.clinics.some((c) => c.id === clinicId);
+  if (!exists) {
+    console.warn('Clinic not found in state when updating:', clinicId);
+    return state;
+  }
+
+  return {
+    ...state,
+    clinics: state.clinics.map((clinic) => {
+      if (clinic.id !== clinicId) return clinic;
+      const safeClinic: Clinic = {
+        ...clinic,
+        inventory: Array.isArray(clinic.inventory) ? clinic.inventory : [],
+        sales: Array.isArray(clinic.sales) ? clinic.sales : [],
+        purchases: Array.isArray(clinic.purchases) ? clinic.purchases : [],
+        clients: Array.isArray(clinic.clients) ? clinic.clients : [],
+        suppliers: Array.isArray(clinic.suppliers) ? clinic.suppliers : [],
+        employees: Array.isArray(clinic.employees) ? clinic.employees : [],
+        cashFlow: Array.isArray(clinic.cashFlow) ? clinic.cashFlow : [],
+      };
+      return updater(safeClinic);
+    }),
+  };
+}
+
 async function loadAppState(): Promise<AppState> {
+  const localData = readLocalStorageState();
+
   try {
     const response = await fetch(`/api/state?t=${Date.now()}`, { cache: 'no-store' });
     if (response.ok) {
       const serverData = (await response.json()) as AppState;
       if (serverData && Array.isArray(serverData.clinics)) {
+        // Recovery check: if server returned 0 clinics but local has clinics, recover local state to server
+        if (serverData.clinics.length === 0 && localData && Array.isArray(localData.clinics) && localData.clinics.length > 0) {
+          fetch('/api/state', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(localData),
+          }).catch(console.error);
+          return localData;
+        }
+
         writeLocalStorageState(serverData);
         return serverData;
       }
@@ -207,7 +247,6 @@ async function loadAppState(): Promise<AppState> {
     console.warn('Network error loading server state:', err);
   }
 
-  const localData = readLocalStorageState();
   return localData || defaultData;
 }
 
@@ -738,20 +777,18 @@ export default function HomePage() {
       image: productForm.image || undefined,
     };
 
-    const updatedClinics = appData.clinics.map((clinic) => {
-      if (clinic.id !== currentClinic.id) return clinic;
+    const nextState = updateClinicInState(appData, currentClinic.id, (clinic) => {
+      const existingInventory = clinic.inventory || [];
+      const updatedInventory = editingProductId
+        ? existingInventory.map((product) => (product.id === editingProductId ? item : product))
+        : [item, ...existingInventory];
 
-      if (editingProductId) {
-        return {
-          ...clinic,
-          inventory: clinic.inventory.map((product) => (product.id === editingProductId ? item : product)),
-        };
-      }
-
-      return { ...clinic, inventory: [item, ...clinic.inventory] };
+      return {
+        ...clinic,
+        inventory: updatedInventory,
+      };
     });
 
-    const nextState: AppState = { ...appData, clinics: updatedClinics };
     await updateStateAndSync(nextState);
 
     showToast(editingProductId ? '¡Producto actualizado! 🐾' : '¡Producto guardado exitosamente! 🐾', 'success');
@@ -784,16 +821,15 @@ export default function HomePage() {
   const handleDeleteProduct = async (productId: string) => {
     if (!currentClinic) return;
 
-    const targetProduct = currentClinic.inventory.find((p) => p.id === productId);
+    const targetProduct = (currentClinic.inventory || []).find((p) => p.id === productId);
     const confirmMsg = targetProduct ? `¿Eliminar "${targetProduct.name}"?` : '¿Eliminar producto?';
     if (!window.confirm(confirmMsg)) return;
 
-    const updatedClinics = appData.clinics.map((clinic) => {
-      if (clinic.id !== currentClinic.id) return clinic;
-      return { ...clinic, inventory: clinic.inventory.filter((product) => product.id !== productId) };
-    });
+    const nextState = updateClinicInState(appData, currentClinic.id, (clinic) => ({
+      ...clinic,
+      inventory: (clinic.inventory || []).filter((product) => product.id !== productId),
+    }));
 
-    const nextState: AppState = { ...appData, clinics: updatedClinics };
     await updateStateAndSync(nextState);
     showToast('Producto eliminado', 'info');
 
@@ -808,7 +844,7 @@ export default function HomePage() {
     event.preventDefault();
     if (!currentClinic) return;
 
-    const selectedProduct = currentClinic.inventory.find((item) => item.id === saleForm.productId);
+    const selectedProduct = (currentClinic.inventory || []).find((item) => item.id === saleForm.productId);
     if (!selectedProduct) {
       showToast('Selecciona un producto válido', 'error');
       return;
@@ -826,41 +862,38 @@ export default function HomePage() {
     }
 
     const total = selectedProduct.price * quantity;
-    const updatedInventory = currentClinic.inventory.map((item) => {
-      if (item.id !== selectedProduct.id) return item;
-      return { ...item, stock: Math.max(0, item.stock - quantity) };
-    });
 
-    const updatedClinics: Clinic[] = appData.clinics.map((clinic) => {
-      if (clinic.id !== currentClinic.id) return clinic;
+    const nextState = updateClinicInState(appData, currentClinic.id, (clinic) => {
+      const updatedInventory = (clinic.inventory || []).map((item) => {
+        if (item.id !== selectedProduct.id) return item;
+        return { ...item, stock: Math.max(0, item.stock - quantity) };
+      });
+
+      const newSale: Sale = {
+        id: `sale-${Date.now()}`,
+        product: selectedProduct.name,
+        qty: quantity,
+        total,
+        date: new Date().toISOString().slice(0, 10),
+        client: saleForm.clientName.trim() || 'Cliente general',
+      };
+
+      const newCashEntry: CashEntry = {
+        id: `cash-${Date.now()}`,
+        type: 'ingreso',
+        description: `Venta de ${selectedProduct.name}`,
+        amount: total,
+        date: new Date().toISOString().slice(0, 10),
+      };
+
       return {
         ...clinic,
         inventory: updatedInventory,
-        sales: [
-          {
-            id: `sale-${Date.now()}`,
-            product: selectedProduct.name,
-            qty: quantity,
-            total,
-            date: new Date().toISOString().slice(0, 10),
-            client: saleForm.clientName.trim() || 'Cliente general',
-          },
-          ...clinic.sales,
-        ],
-        cashFlow: [
-          {
-            id: `cash-${Date.now()}`,
-            type: 'ingreso' as const,
-            description: `Venta de ${selectedProduct.name}`,
-            amount: total,
-            date: new Date().toISOString().slice(0, 10),
-          },
-          ...clinic.cashFlow,
-        ],
+        sales: [newSale, ...(clinic.sales || [])],
+        cashFlow: [newCashEntry, ...(clinic.cashFlow || [])],
       };
     });
 
-    const nextState: AppState = { ...appData, clinics: updatedClinics };
     await updateStateAndSync(nextState);
     showToast(`¡Venta de ${selectedProduct.name} registrada! 🛒`, 'success');
     setSaleForm({ productId: '', quantity: '1', clientName: '' });
@@ -870,7 +903,7 @@ export default function HomePage() {
   const handleDeleteSale = async (saleId: string) => {
     if (!currentClinic) return;
 
-    const targetSale = currentClinic.sales.find((sale) => sale.id === saleId);
+    const targetSale = (currentClinic.sales || []).find((sale) => sale.id === saleId);
     if (!targetSale) return;
 
     const shouldDelete = window.confirm(
@@ -878,22 +911,19 @@ export default function HomePage() {
     );
     if (!shouldDelete) return;
 
-    // Restore inventory stock for matching product
-    const updatedInventory = currentClinic.inventory.map((item) => {
-      if (item.name.toLowerCase() === targetSale.product.toLowerCase()) {
-        return { ...item, stock: item.stock + targetSale.qty };
-      }
-      return item;
-    });
+    const nextState = updateClinicInState(appData, currentClinic.id, (clinic) => {
+      const updatedInventory = (clinic.inventory || []).map((item) => {
+        if (item.name.toLowerCase() === targetSale.product.toLowerCase()) {
+          return { ...item, stock: item.stock + targetSale.qty };
+        }
+        return item;
+      });
 
-    // Remove sale and corresponding cash flow entry
-    const updatedSales = currentClinic.sales.filter((sale) => sale.id !== saleId);
-    const updatedCashFlow = currentClinic.cashFlow.filter(
-      (cash) => !(cash.description === `Venta de ${targetSale.product}` && cash.amount === targetSale.total && cash.date === targetSale.date),
-    );
+      const updatedSales = (clinic.sales || []).filter((sale) => sale.id !== saleId);
+      const updatedCashFlow = (clinic.cashFlow || []).filter(
+        (cash) => !(cash.description === `Venta de ${targetSale.product}` && cash.amount === targetSale.total && cash.date === targetSale.date),
+      );
 
-    const updatedClinics = appData.clinics.map((clinic) => {
-      if (clinic.id !== currentClinic.id) return clinic;
       return {
         ...clinic,
         inventory: updatedInventory,
@@ -902,7 +932,6 @@ export default function HomePage() {
       };
     });
 
-    const nextState: AppState = { ...appData, clinics: updatedClinics };
     await updateStateAndSync(nextState);
     showToast(`Venta eliminada y stock restaurado (+${targetSale.qty} ud) 🔄`, 'info');
   };

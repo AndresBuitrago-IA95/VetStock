@@ -108,6 +108,8 @@ export const defaultAppState: AppState = {
   clinics: [],
 };
 
+let memoryCache: AppState | null = null;
+
 export function getAppStateFilePath() {
   return path.join(process.cwd(), 'data', 'app-state.json');
 }
@@ -118,36 +120,58 @@ export function readAppStateFile(): AppState {
   try {
     if (!fs.existsSync(filePath)) {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, JSON.stringify(defaultAppState, null, 2), 'utf8');
-      return defaultAppState;
+      const initial = memoryCache || defaultAppState;
+      writeAppStateFile(initial);
+      return initial;
     }
 
     const content = fs.readFileSync(filePath, 'utf8');
     if (!content.trim()) {
-      fs.writeFileSync(filePath, JSON.stringify(defaultAppState, null, 2), 'utf8');
+      if (memoryCache) return memoryCache;
       return defaultAppState;
     }
 
     const parsed = JSON.parse(content) as AppState;
-    if (parsed && typeof parsed === 'object') {
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.clinics)) {
       if (!parsed.updatedAt) parsed.updatedAt = Date.now();
+      memoryCache = parsed;
       return parsed;
     }
 
+    if (memoryCache) return memoryCache;
     return defaultAppState;
-  } catch {
+  } catch (err) {
+    console.warn('Error reading app state file:', err);
+    if (memoryCache) return memoryCache;
     return defaultAppState;
   }
 }
 
 export function writeAppStateFile(data: AppState): AppState {
   const filePath = getAppStateFilePath();
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+
   const stampedData: AppState = {
     ...data,
     updatedAt: Date.now(),
   };
-  fs.writeFileSync(filePath, JSON.stringify(stampedData, null, 2), 'utf8');
+
+  memoryCache = stampedData;
+
+  const tempFilePath = `${filePath}.${Date.now()}.${Math.random().toString(36).substring(2, 7)}.tmp`;
+  try {
+    fs.writeFileSync(tempFilePath, JSON.stringify(stampedData, null, 2), 'utf8');
+    fs.renameSync(tempFilePath, filePath);
+  } catch (err) {
+    console.error('Atomic file write error:', err);
+    try {
+      fs.writeFileSync(filePath, JSON.stringify(stampedData, null, 2), 'utf8');
+    } catch {
+      // Memory cache is preserved even if disk write fails
+    }
+  }
+
   return stampedData;
 }
 
