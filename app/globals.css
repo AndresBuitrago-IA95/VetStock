@@ -187,6 +187,28 @@ a { text-decoration: none; }
   box-shadow: 0 0 0 4px rgba(44, 109, 244, 0.12);
 }
 
+.sale-lines {
+  display: grid;
+  gap: 12px;
+}
+
+.sale-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.sale-add-line,
+.sale-remove-line {
+  width: auto;
+  white-space: nowrap;
+}
+
+.sale-line .sale-remove-line {
+  margin-bottom: 2px;
+}
+
 .primary-button,
 .secondary-button,
 .tab {
@@ -1096,6 +1118,20 @@ th {
 
   .inline-inputs {
     grid-template-columns: 1fr;
+  }
+
+  .sale-line {
+    grid-template-columns: minmax(0, 1fr) 76px auto;
+    gap: 6px;
+  }
+
+  .sale-line .sale-remove-line {
+    padding: 8px;
+  }
+
+  .sale-add-line {
+    padding: 10px;
+    font-size: 0.82rem;
   }
 
   .auth-card {

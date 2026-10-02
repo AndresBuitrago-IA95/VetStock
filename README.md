@@ -40,6 +40,13 @@ npm run start
 
 ## Despliegue recomendado
 
+Para que las cuentas y los cambios estén disponibles desde varios dispositivos e instancias, configura estas variables de entorno de Upstash Redis en el servicio:
+
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
+
+Sin estas variables, el estado solo se conserva en memoria y no se comparte entre instancias; la aplicación mostrará un aviso de almacenamiento en vez de indicar que la contraseña es incorrecta cuando no pueda encontrar una veterinaria.
+
 ### Vercel
 
 1. Conecta este repositorio con Vercel.

@@ -14,6 +14,15 @@ type Product = {
   image?: string;
 };
 
+type SaleItem = {
+  productId: string;
+  product: string;
+  qty: number;
+  unitPrice: number;
+  unitCost: number;
+  total: number;
+};
+
 type Sale = {
   id: string;
   product: string;
@@ -21,6 +30,7 @@ type Sale = {
   total: number;
   date: string;
   client: string;
+  items?: SaleItem[];
 };
 
 type Purchase = {
@@ -60,6 +70,7 @@ type CashEntry = {
   description: string;
   amount: number;
   date: string;
+  saleId?: string;
 };
 
 type Clinic = {
@@ -312,7 +323,8 @@ export default function HomePage() {
 
   // UI state
   const [activeTab, setActiveTab] = useState<TabKey>('Dashboard');
-  const [saleForm, setSaleForm] = useState({ productId: '', quantity: '1', clientName: '' });
+  const [saleLines, setSaleLines] = useState([{ productId: '', quantity: '1' }]);
+  const [saleClientName, setSaleClientName] = useState('');
   const [toast, setToast] = useState<ToastNotification | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -409,6 +421,9 @@ export default function HomePage() {
   const estimatedGrossProfit = useMemo(() => {
     if (!currentClinic) return 0;
     return currentClinic.sales.reduce((profit, sale) => {
+      if (sale.items?.length) {
+        return profit + sale.items.reduce((saleProfit, item) => saleProfit + (item.unitPrice - item.unitCost) * item.qty, 0);
+      }
       const product = currentClinic.inventory.find((p) => p.name.toLowerCase() === sale.product.toLowerCase());
       const unitCost = product ? product.cost : 0;
       const unitPrice = sale.total / (sale.qty || 1);
@@ -844,46 +859,66 @@ export default function HomePage() {
     event.preventDefault();
     if (!currentClinic) return;
 
-    const selectedProduct = (currentClinic.inventory || []).find((item) => item.id === saleForm.productId);
-    if (!selectedProduct) {
-      showToast('Selecciona un producto válido', 'error');
-      return;
+    const itemsByProduct = new Map<string, SaleItem>();
+    for (const line of saleLines) {
+      const selectedProduct = currentClinic.inventory.find((item) => item.id === line.productId);
+      const quantity = Number(line.quantity);
+      if (!selectedProduct) {
+        showToast('Selecciona un producto válido en cada renglón', 'error');
+        return;
+      }
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        showToast('Cada cantidad debe ser mayor a 0', 'error');
+        return;
+      }
+
+      const previous = itemsByProduct.get(selectedProduct.id);
+      const combinedQuantity = (previous?.qty ?? 0) + quantity;
+      if (combinedQuantity > selectedProduct.stock) {
+        showToast(`Stock insuficiente para ${selectedProduct.name}. Disponible: ${selectedProduct.stock}`, 'error');
+        return;
+      }
+      itemsByProduct.set(selectedProduct.id, {
+        productId: selectedProduct.id,
+        product: selectedProduct.name,
+        qty: combinedQuantity,
+        unitPrice: selectedProduct.price,
+        unitCost: selectedProduct.cost,
+        total: selectedProduct.price * combinedQuantity,
+      });
     }
 
-    const quantity = Number(saleForm.quantity);
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      showToast('La cantidad debe ser mayor a 0', 'error');
-      return;
-    }
-
-    if (quantity > selectedProduct.stock) {
-      showToast(`Stock insuficiente. Disponible: ${selectedProduct.stock}`, 'error');
-      return;
-    }
-
-    const total = selectedProduct.price * quantity;
+    const saleItems = Array.from(itemsByProduct.values());
+    const total = saleItems.reduce((sum, item) => sum + item.total, 0);
+    const productSummary = saleItems.map((item) => item.product).join(', ');
+    const totalQuantity = saleItems.reduce((sum, item) => sum + item.qty, 0);
+    const saleId = `sale-${Date.now()}`;
+    const saleDate = new Date().toISOString().slice(0, 10);
 
     const nextState = updateClinicInState(appData, currentClinic.id, (clinic) => {
-      const updatedInventory = (clinic.inventory || []).map((item) => {
-        if (item.id !== selectedProduct.id) return item;
-        return { ...item, stock: Math.max(0, item.stock - quantity) };
-      });
+      const quantitiesByProduct = new Map(saleItems.map((item) => [item.productId, item.qty] as const));
+      const updatedInventory = (clinic.inventory || []).map((item) => ({
+        ...item,
+        stock: Math.max(0, item.stock - (quantitiesByProduct.get(item.id) ?? 0)),
+      }));
 
       const newSale: Sale = {
-        id: `sale-${Date.now()}`,
-        product: selectedProduct.name,
-        qty: quantity,
+        id: saleId,
+        product: productSummary,
+        qty: totalQuantity,
         total,
-        date: new Date().toISOString().slice(0, 10),
-        client: saleForm.clientName.trim() || 'Cliente general',
+        date: saleDate,
+        client: saleClientName.trim() || 'Cliente general',
+        items: saleItems,
       };
 
       const newCashEntry: CashEntry = {
-        id: `cash-${Date.now()}`,
+        id: `cash-${saleId}`,
         type: 'ingreso',
-        description: `Venta de ${selectedProduct.name}`,
+        description: `Venta de ${productSummary}`,
         amount: total,
-        date: new Date().toISOString().slice(0, 10),
+        date: saleDate,
+        saleId,
       };
 
       return {
@@ -895,8 +930,9 @@ export default function HomePage() {
     });
 
     await updateStateAndSync(nextState);
-    showToast(`¡Venta de ${selectedProduct.name} registrada! 🛒`, 'success');
-    setSaleForm({ productId: '', quantity: '1', clientName: '' });
+    showToast(`¡Venta de ${saleItems.length} producto(s) registrada!`, 'success');
+    setSaleLines([{ productId: '', quantity: '1' }]);
+    setSaleClientName('');
   };
 
   // Delete sale and restore inventory stock automatically
@@ -906,22 +942,26 @@ export default function HomePage() {
     const targetSale = (currentClinic.sales || []).find((sale) => sale.id === saleId);
     if (!targetSale) return;
 
+    const saleProductNames = targetSale.items?.map((item) => item.product).join(', ') || targetSale.product;
     const shouldDelete = window.confirm(
-      `¿Deseas eliminar la venta de "${targetSale.product}" por ${formatCurrency(targetSale.total)}?\n\nEl stock de ${targetSale.qty} unidad(es) será devuelto automáticamente al inventario.`,
+      `¿Deseas eliminar la venta de "${saleProductNames}" por ${formatCurrency(targetSale.total)}?\n\nEl stock será devuelto automáticamente al inventario.`,
     );
     if (!shouldDelete) return;
 
     const nextState = updateClinicInState(appData, currentClinic.id, (clinic) => {
+      const restoredQuantities = targetSale.items?.length
+        ? new Map(targetSale.items.map((item) => [item.productId, item.qty] as const))
+        : null;
       const updatedInventory = (clinic.inventory || []).map((item) => {
-        if (item.name.toLowerCase() === targetSale.product.toLowerCase()) {
-          return { ...item, stock: item.stock + targetSale.qty };
-        }
-        return item;
+        const restoredQuantity = restoredQuantities
+          ? restoredQuantities.get(item.id) ?? 0
+          : item.name.toLowerCase() === targetSale.product.toLowerCase() ? targetSale.qty : 0;
+        return restoredQuantity ? { ...item, stock: item.stock + restoredQuantity } : item;
       });
 
       const updatedSales = (clinic.sales || []).filter((sale) => sale.id !== saleId);
       const updatedCashFlow = (clinic.cashFlow || []).filter(
-        (cash) => !(cash.description === `Venta de ${targetSale.product}` && cash.amount === targetSale.total && cash.date === targetSale.date),
+        (cash) => !(cash.saleId === saleId || (!cash.saleId && cash.description === `Venta de ${targetSale.product}` && cash.amount === targetSale.total && cash.date === targetSale.date)),
       );
 
       return {
@@ -933,7 +973,7 @@ export default function HomePage() {
     });
 
     await updateStateAndSync(nextState);
-    showToast(`Venta eliminada y stock restaurado (+${targetSale.qty} ud) 🔄`, 'info');
+    showToast('Venta eliminada y stock restaurado', 'info');
   };
 
   // Export Inventory CSV
@@ -974,14 +1014,14 @@ export default function HomePage() {
     }
 
     const headers = ['ID Venta', 'Producto', 'Cantidad', 'Cliente', 'Total (COP)', 'Fecha'];
-    const rows = currentClinic.sales.map((sale) => [
+    const rows = currentClinic.sales.flatMap((sale) => (sale.items?.length ? sale.items : [{ product: sale.product, qty: sale.qty, total: sale.total }]).map((item) => [
       sale.id,
-      `"${sale.product.replace(/"/g, '""')}"`,
-      sale.qty,
+      `"${item.product.replace(/"/g, '""')}"`,
+      item.qty,
       `"${sale.client.replace(/"/g, '""')}"`,
-      sale.total,
+      item.total,
       sale.date,
-    ]);
+    ]));
 
     const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
@@ -1698,7 +1738,7 @@ export default function HomePage() {
                   {currentClinic?.sales.length ? (
                     currentClinic.sales.map((sale) => (
                       <tr key={sale.id}>
-                        <td><strong>{sale.product}</strong></td>
+                        <td><strong>{sale.items?.length ? sale.items.map((item) => `${item.product} × ${item.qty}`).join(', ') : sale.product}</strong></td>
                         <td>{sale.qty}</td>
                         <td>{sale.client}</td>
                         <td>{formatCurrency(sale.total)}</td>
@@ -1732,14 +1772,14 @@ export default function HomePage() {
                     <div className="product-card-top">
                       <div className="product-card-avatar" style={{ background: '#e0f2fe', color: '#0369a1' }}>🛒</div>
                       <div className="product-card-meta">
-                        <h4 className="product-card-title">{sale.product}</h4>
+                        <h4 className="product-card-title">{sale.items?.length ? sale.items.map((item) => `${item.product} × ${item.qty}`).join(', ') : sale.product}</h4>
                         <div className="product-card-category">Cliente: {sale.client} • {sale.date}</div>
                       </div>
                       <strong>{formatCurrency(sale.total)}</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                       <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
-                        Cantidad: <strong>{sale.qty} ud(s)</strong>
+                        Cantidad total: <strong>{sale.qty} ud(s)</strong>
                       </span>
                       <button
                         type="button"
@@ -1760,39 +1800,56 @@ export default function HomePage() {
           <div className="panel">
             <h2>Registrar venta</h2>
             <form className="stack-form" onSubmit={handleAddSale}>
-              <label>
-                <span>Producto *</span>
-                <select
-                  value={saleForm.productId}
-                  onChange={(event) => setSaleForm({ ...saleForm, productId: event.target.value })}
-                  required
-                >
-                  <option value="">Selecciona un producto</option>
-                  {currentClinic?.inventory.map((item) => (
-                    <option key={item.id} value={item.id} disabled={item.stock === 0}>
-                      {item.name} ({item.stock} en stock) - {formatCurrency(item.price)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="sale-lines">
+                <div className="section-head compact">
+                  <h3>Productos</h3>
+                  <button type="button" className="secondary-button sale-add-line" onClick={() => setSaleLines((lines) => [...lines, { productId: '', quantity: '1' }])}>
+                    + Agregar producto
+                  </button>
+                </div>
+                {saleLines.map((line, index) => (
+                  <div className="sale-line" key={`sale-line-${index}`}>
+                    <label>
+                      <span>Producto {index + 1} *</span>
+                      <select
+                        value={line.productId}
+                        onChange={(event) => setSaleLines((lines) => lines.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}
+                        required
+                      >
+                        <option value="">Selecciona un producto</option>
+                        {currentClinic?.inventory.map((item) => (
+                          <option key={item.id} value={item.id} disabled={item.stock === 0}>
+                            {item.name} ({item.stock} en stock) - {formatCurrency(item.price)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Cantidad *</span>
+                      <input
+                        type="number"
+                        min={0.01}
+                        step="any"
+                        value={line.quantity}
+                        onChange={(event) => setSaleLines((lines) => lines.map((item, lineIndex) => lineIndex === index ? { ...item, quantity: event.target.value } : item))}
+                        required
+                      />
+                    </label>
+                    {saleLines.length > 1 ? (
+                      <button type="button" className="tiny-button delete sale-remove-line" aria-label={`Quitar producto ${index + 1}`} onClick={() => setSaleLines((lines) => lines.filter((_, lineIndex) => lineIndex !== index))}>
+                        Quitar
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
 
               <label>
                 <span>Cliente</span>
                 <input
-                  value={saleForm.clientName}
-                  onChange={(event) => setSaleForm({ ...saleForm, clientName: event.target.value })}
+                  value={saleClientName}
+                  onChange={(event) => setSaleClientName(event.target.value)}
                   placeholder="Ej. Juan Pérez (o dejar Cliente General)"
-                />
-              </label>
-
-              <label>
-                <span>Cantidad</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={saleForm.quantity}
-                  onChange={(event) => setSaleForm({ ...saleForm, quantity: event.target.value })}
-                  required
                 />
               </label>
 

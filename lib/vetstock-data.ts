@@ -12,6 +12,15 @@ export type Product = {
   image?: string;
 };
 
+export type SaleItem = {
+  productId: string;
+  product: string;
+  qty: number;
+  unitPrice: number;
+  unitCost: number;
+  total: number;
+};
+
 export type Sale = {
   id: string;
   product: string;
@@ -19,6 +28,7 @@ export type Sale = {
   total: number;
   date: string;
   client: string;
+  items?: SaleItem[];
 };
 
 export type Purchase = {
@@ -58,6 +68,7 @@ export type CashEntry = {
   description: string;
   amount: number;
   date: string;
+  saleId?: string;
 };
 
 export type Clinic = {
@@ -121,6 +132,10 @@ function getRedisClient(): Redis | null {
   return new Redis({ url, token });
 }
 
+export function hasSharedPersistenceConfigured(): boolean {
+  return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+}
+
 export async function readAppStateFile(): Promise<AppState> {
   const redis = getRedisClient();
 
@@ -132,7 +147,8 @@ export async function readAppStateFile(): Promise<AppState> {
         return memoryCache;
       }
     } catch (err) {
-      console.warn('Redis read error, falling back to memory cache:', err);
+      console.error('Redis read error:', err);
+      throw new Error('No se pudo consultar el almacenamiento compartido.');
     }
   }
 
