@@ -5,6 +5,7 @@ import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 're
 type Product = {
   id: string;
   name: string;
+  description?: string;
   category: string;
   stock: number;
   minStock: number;
@@ -118,8 +119,6 @@ type ToastNotification = {
   type: 'success' | 'error' | 'info';
 };
 
-const SESSION_COOKIE_NAME = 'vetstock-session';
-const LOCAL_STORAGE_KEY = 'vetstock-app-state-v2';
 const POLL_INTERVAL_MS = 2500;
 
 const defaultData: AppState = {
@@ -128,7 +127,7 @@ const defaultData: AppState = {
     id: 'superadmin-1',
     name: 'Super Admin',
     email: 'admin@vetstock.com',
-    password: 'admin123',
+    password: '',
     role: 'superadmin',
   },
   clinics: [],
@@ -143,6 +142,7 @@ const emptyClinicForm = {
 
 const emptyProductForm = {
   name: '',
+  description: '',
   category: '',
   stock: '0',
   minStock: '0',
@@ -153,56 +153,6 @@ const emptyProductForm = {
 };
 
 const tabs: TabKey[] = ['Dashboard', 'Inventario', 'Ventas'];
-
-function readSessionCookie(): Session | null {
-  if (typeof document === 'undefined') return null;
-
-  const cookies = document.cookie.split('; ');
-  const sessionCookie = cookies.find((cookie) => cookie.startsWith(`${SESSION_COOKIE_NAME}=`));
-  if (!sessionCookie) return null;
-
-  const value = sessionCookie.split('=')[1];
-  if (!value) return null;
-
-  try {
-    return JSON.parse(decodeURIComponent(value)) as Session;
-  } catch {
-    return null;
-  }
-}
-
-function writeSessionCookie(session: Session | null) {
-  if (typeof document === 'undefined') return;
-
-  if (session) {
-    document.cookie = `${SESSION_COOKIE_NAME}=${encodeURIComponent(JSON.stringify(session))}; path=/; max-age=86400; SameSite=Lax`;
-    return;
-  }
-
-  document.cookie = `${SESSION_COOKIE_NAME}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
-}
-
-function readLocalStorageState(): AppState | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as AppState;
-    if (parsed && Array.isArray(parsed.clinics)) return parsed;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function writeLocalStorageState(data: AppState) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-  } catch (err) {
-    console.warn('LocalStorage save error:', err);
-  }
-}
 
 function updateClinicInState(state: AppState, clinicId: string, updater: (clinic: Clinic) => Clinic): AppState {
   if (!state || !Array.isArray(state.clinics)) return state;
@@ -233,67 +183,43 @@ function updateClinicInState(state: AppState, clinicId: string, updater: (clinic
 }
 
 async function loadAppState(): Promise<AppState> {
-  const localData = readLocalStorageState();
-
-  try {
-    const response = await fetch(`/api/state?t=${Date.now()}`, { cache: 'no-store' });
-    if (response.ok) {
-      const serverData = (await response.json()) as AppState;
-      if (serverData && Array.isArray(serverData.clinics)) {
-        // Recovery check: if server returned 0 clinics but local has clinics, recover local state to server
-        if (serverData.clinics.length === 0 && localData && Array.isArray(localData.clinics) && localData.clinics.length > 0) {
-          fetch('/api/state', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(localData),
-          }).catch(console.error);
-          return localData;
-        }
-
-        writeLocalStorageState(serverData);
-        return serverData;
-      }
-    }
-  } catch (err) {
-    console.warn('Network error loading server state:', err);
+  const response = await fetch('/api/state', { cache: 'no-store' });
+  const payload = await response.json().catch(() => ({})) as AppState & { error?: string };
+  if (!response.ok) {
+    throw new Error(payload.error || 'No se pudo cargar el estado de Neon.');
   }
-
-  return localData || defaultData;
+  if (!payload || !Array.isArray(payload.clinics)) {
+    throw new Error('Neon devolvió un estado con formato inválido.');
+  }
+  return payload;
 }
 
 async function syncStateToServer(data: AppState): Promise<AppState> {
-  writeLocalStorageState(data);
-
-  try {
-    const response = await fetch('/api/state', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-
-    if (response.ok) {
-      const serverResult = (await response.json()) as AppState;
-      writeLocalStorageState(serverResult);
-      return serverResult;
-    }
-  } catch (err) {
-    console.warn('Server save failed, using local storage state:', err);
+  const response = await fetch('/api/state', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const payload = await response.json().catch(() => ({})) as AppState & { error?: string };
+  if (!response.ok) {
+    throw new Error(payload.error || 'No se pudieron guardar los cambios en Neon.');
   }
-
-  return data;
+  return payload;
 }
 
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('es-CO', {
     style: 'currency',
     currency: 'COP',
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 2,
   }).format(value);
 }
 
 export default function HomePage() {
   const [appData, setAppData] = useState<AppState>(defaultData);
   const [session, setSession] = useState<Session | null>(null);
+  const sessionRef = useRef<Session | null>(null);
+  const hasPollErrorRef = useRef(false);
   const [loginError, setLoginError] = useState('');
   const [clinicForm, setClinicForm] = useState({ ...emptyClinicForm, authorized: true });
   const [editingClinicId, setEditingClinicId] = useState<string | null>(null);
@@ -325,6 +251,15 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = useState<TabKey>('Dashboard');
   const [saleLines, setSaleLines] = useState([{ productId: '', quantity: '1' }]);
   const [saleClientName, setSaleClientName] = useState('');
+  const [isCategoryMenuOpen, setIsCategoryMenuOpen] = useState(false);
+  const [isConfirmingSale, setIsConfirmingSale] = useState(false);
+  const [pendingSale, setPendingSale] = useState<{
+    items: SaleItem[];
+    total: number;
+    productSummary: string;
+    totalQuantity: number;
+    client: string;
+  } | null>(null);
   const [toast, setToast] = useState<ToastNotification | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -335,22 +270,26 @@ export default function HomePage() {
     }, 3500);
   };
 
-  const updateStateAndSync = async (nextState: AppState) => {
+  const updateStateAndSync = async (nextState: AppState): Promise<boolean> => {
     const now = Date.now();
+    const previousState = appData;
     const stampedState: AppState = {
       ...nextState,
       updatedAt: now,
     };
 
     isSavingRef.current = true;
-    writeLocalStorageState(stampedState);
     setAppData(stampedState);
 
     try {
       const finalState = await syncStateToServer(stampedState);
       setAppData(finalState);
+      return true;
     } catch (err) {
-      console.warn('Sync failed, keeping local state:', err);
+      setAppData(previousState);
+      const message = err instanceof Error ? err.message : 'No se pudieron guardar los cambios.';
+      showToast(message, 'error');
+      return false;
     } finally {
       // Keep saving lock for 5 seconds to prevent race condition polling overwrites on high latency mobile network
       setTimeout(() => {
@@ -361,22 +300,42 @@ export default function HomePage() {
 
   useEffect(() => {
     const syncInitial = async () => {
-      const nextData = await loadAppState();
-      setAppData(nextData);
-      setSession(readSessionCookie());
+      try {
+        const response = await fetch('/api/auth/session', { cache: 'no-store' });
+        if (response.status === 401) return;
+        const payload = await response.json() as { user?: Session; error?: string };
+        if (!response.ok || !payload.user) {
+          throw new Error(payload.error || 'No se pudo validar la sesión.');
+        }
+        sessionRef.current = payload.user;
+        setSession(payload.user);
+        setAppData(await loadAppState());
+      } catch (error) {
+        console.error('Initial Neon sync failed:', error);
+        showToast(error instanceof Error ? error.message : 'No se pudo conectar con Neon.', 'error');
+      }
     };
 
     syncInitial();
 
     const intervalId = window.setInterval(async () => {
-      if (isSavingRef.current) return; // Skip polling if client is currently saving
+      if (isSavingRef.current || !sessionRef.current) return;
 
-      const nextData = await loadAppState();
-      setAppData((previous) => {
-        if (isSavingRef.current) return previous;
-        const equal = JSON.stringify(previous) === JSON.stringify(nextData);
-        return equal ? previous : nextData;
-      });
+      try {
+        const nextData = await loadAppState();
+        hasPollErrorRef.current = false;
+        setAppData((previous) => {
+          if (isSavingRef.current) return previous;
+          const equal = JSON.stringify(previous) === JSON.stringify(nextData);
+          return equal ? previous : nextData;
+        });
+      } catch (error) {
+        console.error('Neon polling error:', error);
+        if (!hasPollErrorRef.current) {
+          showToast(error instanceof Error ? error.message : 'No se pudo sincronizar con Neon.', 'error');
+          hasPollErrorRef.current = true;
+        }
+      }
     }, POLL_INTERVAL_MS);
 
     return () => {
@@ -418,6 +377,17 @@ export default function HomePage() {
     return currentClinic.sales.reduce((total, item) => total + item.total, 0);
   }, [currentClinic]);
 
+  const saleSubtotal = useMemo(() => {
+    if (!currentClinic) return 0;
+    return saleLines.reduce((subtotal, line) => {
+      const product = currentClinic.inventory.find((item) => item.id === line.productId);
+      const quantity = Number(line.quantity);
+      return product && Number.isFinite(quantity) && quantity > 0
+        ? subtotal + product.price * quantity
+        : subtotal;
+    }, 0);
+  }, [currentClinic, saleLines]);
+
   const estimatedGrossProfit = useMemo(() => {
     if (!currentClinic) return 0;
     return currentClinic.sales.reduce((profit, sale) => {
@@ -452,6 +422,11 @@ export default function HomePage() {
     });
     return Array.from(set);
   }, [currentClinic]);
+
+  const matchingCategories = useMemo(() => {
+    const query = productForm.category.trim().toLocaleLowerCase();
+    return availableCategories.filter((category) => category.toLocaleLowerCase().includes(query));
+  }, [availableCategories, productForm.category]);
 
   // Filtered Inventory
   const filteredInventory = useMemo(() => {
@@ -588,15 +563,24 @@ export default function HomePage() {
 
       if (!response.ok) {
         const payload = (await response.json()) as { error?: string };
-        setLoginError(payload.error ?? 'Credenciales incorrectas o esta veterinaria no está autorizada.');
+        setLoginError(payload.error ?? 'Credenciales incorrectas o este negocio no está autorizado.');
         return;
       }
 
       const payload = (await response.json()) as { user: Session };
-      writeSessionCookie(payload.user);
+      sessionRef.current = payload.user;
       setSession(payload.user);
+      try {
+        setAppData(await loadAppState());
+      } catch (error) {
+        sessionRef.current = null;
+        setSession(null);
+        await fetch('/api/auth/logout', { method: 'POST' });
+        setLoginError(error instanceof Error ? error.message : 'No se pudo cargar la información de Neon.');
+        return;
+      }
       setLoginError('');
-      showToast(`¡Bienvenido, ${payload.user.name}! 🐾`, 'success');
+      showToast(`¡Bienvenido, ${payload.user.name}!`, 'success');
     } catch {
       setLoginError('No se pudo iniciar sesión en este momento.');
     }
@@ -623,7 +607,7 @@ export default function HomePage() {
       (clinic) => clinic.email.toLowerCase() === trimmedEmail.toLowerCase() && clinic.id !== editingClinicId,
     );
     if (exists) {
-      showToast('Ya existe una veterinaria registrada con ese email', 'error');
+      showToast('Ya existe un negocio registrado con ese email', 'error');
       return;
     }
 
@@ -660,8 +644,8 @@ export default function HomePage() {
         ];
 
     const nextState = { ...appData, clinics: nextClinics };
-    await updateStateAndSync(nextState);
-    showToast(editingClinicId ? 'Veterinaria actualizada' : 'Veterinaria guardada correctamente');
+    if (!(await updateStateAndSync(nextState))) return;
+    showToast(editingClinicId ? 'Negocio actualizado' : 'Negocio guardado correctamente');
     resetClinicForm();
   };
 
@@ -680,15 +664,15 @@ export default function HomePage() {
     const target = appData.clinics.find((clinic) => clinic.id === clinicId);
     if (!target) return;
 
-    const shouldDelete = window.confirm(`¿Deseas eliminar la veterinaria ${target.name}?`);
+    const shouldDelete = window.confirm(`¿Deseas eliminar el negocio ${target.name}?`);
     if (!shouldDelete) return;
 
     const nextState = {
       ...appData,
       clinics: appData.clinics.filter((clinic) => clinic.id !== clinicId),
     };
-    await updateStateAndSync(nextState);
-    showToast('Veterinaria eliminada', 'info');
+    if (!(await updateStateAndSync(nextState))) return;
+    showToast('Negocio eliminado', 'info');
     if (editingClinicId === clinicId) {
       resetClinicForm();
     }
@@ -720,7 +704,7 @@ export default function HomePage() {
       },
     };
 
-    await updateStateAndSync(nextState);
+    if (!(await updateStateAndSync(nextState))) return;
     setSuperAdminPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
     setSuperAdminPasswordMessage('');
     showToast('Contraseña de superadmin actualizada correctamente');
@@ -731,7 +715,7 @@ export default function HomePage() {
 
     const { clinicId, newPassword, confirmPassword } = clinicPasswordForm;
     if (!clinicId) {
-      setClinicPasswordMessage('Selecciona una veterinaria para cambiar la contraseña.');
+      setClinicPasswordMessage('Selecciona un negocio para cambiar la contraseña.');
       return;
     }
     if (newPassword.length < 6) {
@@ -750,10 +734,10 @@ export default function HomePage() {
       ),
     };
 
-    await updateStateAndSync(nextState);
+    if (!(await updateStateAndSync(nextState))) return;
     setClinicPasswordForm({ clinicId: '', newPassword: '', confirmPassword: '' });
     setClinicPasswordMessage('');
-    showToast('Contraseña de veterinaria actualizada');
+    showToast('Contraseña del negocio actualizada');
   };
 
   const updateProductFormField = (field: keyof typeof emptyProductForm, value: string) => {
@@ -766,7 +750,7 @@ export default function HomePage() {
   const handleSaveProduct = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!currentClinic) {
-      showToast('No se encontró una sesión activa de veterinaria', 'error');
+      showToast('No se encontró una sesión activa del negocio', 'error');
       return;
     }
 
@@ -783,6 +767,7 @@ export default function HomePage() {
     const item: Product = {
       id: editingProductId ?? `product-${Date.now()}`,
       name: productForm.name.trim(),
+      description: productForm.description.trim() || undefined,
       category: productForm.category.trim() || 'General',
       stock: Number.isFinite(parsedStock) && !isNaN(parsedStock) ? Math.max(0, parsedStock) : 0,
       minStock: Number.isFinite(parsedMinStock) && !isNaN(parsedMinStock) ? Math.max(0, parsedMinStock) : 0,
@@ -804,9 +789,9 @@ export default function HomePage() {
       };
     });
 
-    await updateStateAndSync(nextState);
+    if (!(await updateStateAndSync(nextState))) return;
 
-    showToast(editingProductId ? '¡Producto actualizado! 🐾' : '¡Producto guardado exitosamente! 🐾', 'success');
+    showToast(editingProductId ? '¡Producto actualizado!' : '¡Producto guardado exitosamente!', 'success');
     setProductForm(emptyProductForm);
     setEditingProductId(null);
     setIsProductModalOpen(false);
@@ -822,6 +807,7 @@ export default function HomePage() {
     setEditingProductId(product.id);
     setProductForm({
       name: product.name,
+      description: product.description ?? '',
       category: product.category,
       stock: String(product.stock),
       minStock: String(product.minStock),
@@ -845,7 +831,7 @@ export default function HomePage() {
       inventory: (clinic.inventory || []).filter((product) => product.id !== productId),
     }));
 
-    await updateStateAndSync(nextState);
+    if (!(await updateStateAndSync(nextState))) return;
     showToast('Producto eliminado', 'info');
 
     if (editingProductId === productId) {
@@ -892,6 +878,29 @@ export default function HomePage() {
     const total = saleItems.reduce((sum, item) => sum + item.total, 0);
     const productSummary = saleItems.map((item) => item.product).join(', ');
     const totalQuantity = saleItems.reduce((sum, item) => sum + item.qty, 0);
+    setPendingSale({
+      items: saleItems,
+      total,
+      productSummary,
+      totalQuantity,
+      client: saleClientName.trim() || 'Cliente general',
+    });
+  };
+
+  const handleConfirmSale = async () => {
+    if (!currentClinic || !pendingSale || isConfirmingSale) return;
+
+    const { items: saleItems, total, productSummary, totalQuantity, client } = pendingSale;
+    const stockConflict = saleItems.find((saleItem) => {
+      const product = currentClinic.inventory.find((item) => item.id === saleItem.productId);
+      return !product || product.stock < saleItem.qty;
+    });
+    if (stockConflict) {
+      showToast(`El stock de ${stockConflict.product} cambió. Revisa la venta antes de confirmarla.`, 'error');
+      setPendingSale(null);
+      return;
+    }
+
     const saleId = `sale-${Date.now()}`;
     const saleDate = new Date().toISOString().slice(0, 10);
 
@@ -908,7 +917,7 @@ export default function HomePage() {
         qty: totalQuantity,
         total,
         date: saleDate,
-        client: saleClientName.trim() || 'Cliente general',
+        client,
         items: saleItems,
       };
 
@@ -929,10 +938,16 @@ export default function HomePage() {
       };
     });
 
-    await updateStateAndSync(nextState);
-    showToast(`¡Venta de ${saleItems.length} producto(s) registrada!`, 'success');
-    setSaleLines([{ productId: '', quantity: '1' }]);
-    setSaleClientName('');
+    setIsConfirmingSale(true);
+    try {
+      if (!(await updateStateAndSync(nextState))) return;
+      setPendingSale(null);
+      showToast(`¡Venta de ${saleItems.length} producto(s) registrada!`, 'success');
+      setSaleLines([{ productId: '', quantity: '1' }]);
+      setSaleClientName('');
+    } finally {
+      setIsConfirmingSale(false);
+    }
   };
 
   // Delete sale and restore inventory stock automatically
@@ -972,7 +987,7 @@ export default function HomePage() {
       };
     });
 
-    await updateStateAndSync(nextState);
+    if (!(await updateStateAndSync(nextState))) return;
     showToast('Venta eliminada y stock restaurado', 'info');
   };
 
@@ -983,10 +998,11 @@ export default function HomePage() {
       return;
     }
 
-    const headers = ['ID', 'Nombre', 'Categoria', 'Stock', 'Stock Minimo', 'Costo (COP)', 'Precio (COP)', 'Fecha Vencimiento'];
+    const headers = ['ID', 'Nombre', 'Descripción', 'Categoria', 'Stock', 'Stock Minimo', 'Costo (COP)', 'Precio (COP)', 'Fecha Vencimiento'];
     const rows = currentClinic.inventory.map((item) => [
       item.id,
       `"${item.name.replace(/"/g, '""')}"`,
+      `"${(item.description ?? '').replace(/"/g, '""')}"`,
       `"${item.category.replace(/"/g, '""')}"`,
       item.stock,
       item.minStock,
@@ -1035,8 +1051,13 @@ export default function HomePage() {
   };
 
   const signOut = () => {
+    sessionRef.current = null;
     setSession(null);
-    writeSessionCookie(null);
+    setAppData(defaultData);
+    fetch('/api/auth/logout', { method: 'POST' }).catch((error) => {
+      console.error('Could not close the server session:', error);
+      showToast('No se pudo cerrar la sesión en el servidor.', 'error');
+    });
   };
 
   const renderProductForm = (inModal = false) => (
@@ -1046,8 +1067,18 @@ export default function HomePage() {
         <input
           value={productForm.name}
           onChange={(event) => updateProductFormField('name', event.target.value)}
-          placeholder="Ej. Vacuna Rabia Canina 10ml"
+          placeholder="Ej. Café molido 500 g"
           required
+        />
+      </label>
+
+      <label>
+        <span>Descripción</span>
+        <textarea
+          value={productForm.description}
+          onChange={(event) => updateProductFormField('description', event.target.value)}
+          placeholder="Detalles, presentación, referencia u otra información del producto"
+          rows={3}
         />
       </label>
 
@@ -1102,11 +1133,92 @@ export default function HomePage() {
 
       <label>
         <span>Categoría</span>
-        <input
-          value={productForm.category}
-          onChange={(event) => updateProductFormField('category', event.target.value)}
-          placeholder="Ej. Vacunas, Antibióticos, Alimentos"
-        />
+        <div className="category-picker">
+          <div className={`category-picker-control ${isCategoryMenuOpen ? 'open' : ''}`}>
+            <input
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={isCategoryMenuOpen}
+              aria-controls={inModal ? 'category-suggestions-modal' : 'category-suggestions-desktop'}
+              value={productForm.category}
+              onFocus={() => setIsCategoryMenuOpen(true)}
+              onBlur={() => window.setTimeout(() => setIsCategoryMenuOpen(false), 120)}
+              onChange={(event) => {
+                updateProductFormField('category', event.target.value);
+                setIsCategoryMenuOpen(true);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setIsCategoryMenuOpen(false);
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  document.getElementById(`${inModal ? 'category-suggestions-modal' : 'category-suggestions-desktop'}-option-0`)?.focus();
+                }
+              }}
+              placeholder="Escribe o elige una categoría guardada"
+            />
+            <button
+              type="button"
+              className="category-picker-toggle"
+              aria-label={isCategoryMenuOpen ? 'Cerrar categorías' : 'Mostrar categorías'}
+              aria-expanded={isCategoryMenuOpen}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setIsCategoryMenuOpen((open) => !open)}
+            >
+              <span className="category-picker-toggle-icon">⌄</span>
+            </button>
+          </div>
+          {isCategoryMenuOpen ? (
+            <div
+              className="category-suggestions"
+              id={inModal ? 'category-suggestions-modal' : 'category-suggestions-desktop'}
+              role="listbox"
+              aria-label="Categorías sugeridas"
+            >
+              <div className="category-suggestions-heading">
+                <span className="category-suggestions-heading-icon">✳</span>
+                <span>{productForm.category.trim() ? 'Sugerencias que coinciden' : 'Categorías de tu inventario'}</span>
+              </div>
+              {matchingCategories.map((category, index) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={category === productForm.category}
+                  id={`${inModal ? 'category-suggestions-modal' : 'category-suggestions-desktop'}-option-${index}`}
+                  className="category-suggestion-option"
+                  key={category}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    updateProductFormField('category', category);
+                    setIsCategoryMenuOpen(false);
+                  }}
+                >
+                  <span className="category-option-mark" aria-hidden="true">▦</span>
+                  <span className="category-option-name">{category}</span>
+                  <span className="category-option-check" aria-hidden="true">↗</span>
+                </button>
+              ))}
+              {productForm.category.trim() && !availableCategories.some(
+                (category) => category.toLocaleLowerCase() === productForm.category.trim().toLocaleLowerCase(),
+              ) ? (
+                <button
+                  type="button"
+                  className="category-suggestion-option category-create-option"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    updateProductFormField('category', productForm.category.trim());
+                    setIsCategoryMenuOpen(false);
+                  }}
+                >
+                  <span className="category-option-mark" aria-hidden="true">＋</span>
+                  <span className="category-option-name">Usar “{productForm.category.trim()}” como nueva categoría</span>
+                </button>
+              ) : null}
+              {!matchingCategories.length && !productForm.category.trim() ? (
+                <p className="category-suggestions-empty">Las categorías se guardan al agregar productos al inventario.</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </label>
 
       <div className="inline-inputs">
@@ -1193,16 +1305,10 @@ export default function HomePage() {
         )}
 
         <div className="auth-card">
-          <div className="brand-block">
-            <div className="brand-mark">V</div>
-            <div>
-              <p className="label-muted">Sistema de gestión veterinaria</p>
-              <h1>VetStock</h1>
-            </div>
-          </div>
+          <img className="brand-full-logo" src="/andestock-logo.png" alt="AndeStock · Gestión de Inventario en Andes, Antioquia" />
 
           <h2>Iniciar sesión</h2>
-          <p className="subtext">Accede como superadmin o como veterinaria autorizada.</p>
+          <p className="subtext">Controla el inventario de tu negocio en un solo lugar.</p>
 
           <form className="auth-form" onSubmit={handleLogin}>
             <label>
@@ -1240,9 +1346,9 @@ export default function HomePage() {
 
         <header className="app-header">
           <div className="brand-logo-wrap">
-            <div className="brand-logo">V</div>
+            <img className="brand-header-logo" src="/andestock-logo.png" alt="AndeStock" />
             <div className="brand-copy">
-              <p className="label-muted">Panel administrativo</p>
+              <p className="label-muted">Gestión comercial local</p>
               <h1>Superadmin</h1>
             </div>
           </div>
@@ -1251,7 +1357,7 @@ export default function HomePage() {
 
         <section className="summary-grid">
           <article className="stat-card">
-            <span>Total veterinarias</span>
+            <span>Total de negocios</span>
             <strong>{appData.clinics.length}</strong>
           </article>
           <article className="stat-card">
@@ -1266,16 +1372,16 @@ export default function HomePage() {
 
         <section className="admin-grid">
           <div className="panel">
-            <h2>{editingClinicId ? 'Editar veterinaria' : 'Agregar veterinaria autorizada'}</h2>
+            <h2>{editingClinicId ? 'Editar negocio' : 'Agregar negocio autorizado'}</h2>
             <form className="stack-form" onSubmit={handleSaveClinic}>
               <label>
                 <span>Nombre</span>
-                <input value={clinicForm.name} onChange={(event) => setClinicForm({ ...clinicForm, name: event.target.value })} placeholder="Veterinaria El Bosque" />
+                <input value={clinicForm.name} onChange={(event) => setClinicForm({ ...clinicForm, name: event.target.value })} placeholder="Ej. Tienda El Bosque" />
               </label>
 
               <label>
                 <span>Email</span>
-                <input type="email" value={clinicForm.email} onChange={(event) => setClinicForm({ ...clinicForm, email: event.target.value })} placeholder="vet@correo.com" />
+                <input type="email" value={clinicForm.email} onChange={(event) => setClinicForm({ ...clinicForm, email: event.target.value })} placeholder="negocio@correo.com" />
               </label>
 
               <label>
@@ -1297,7 +1403,7 @@ export default function HomePage() {
               </label>
 
               <div className="buttons-row">
-                <button className="primary-button" type="submit">{editingClinicId ? 'Actualizar' : 'Guardar veterinaria'}</button>
+                <button className="primary-button" type="submit">{editingClinicId ? 'Actualizar' : 'Guardar negocio'}</button>
                 {editingClinicId ? (
                   <button type="button" className="secondary-button" onClick={resetClinicForm}>Cancelar</button>
                 ) : null}
@@ -1306,7 +1412,7 @@ export default function HomePage() {
           </div>
 
           <div className="panel">
-            <h2>Veterinarias registradas</h2>
+            <h2>Negocios registrados</h2>
             <div className="clinic-list">
               {appData.clinics.map((clinic) => (
                 <div key={clinic.id} className="clinic-item">
@@ -1353,12 +1459,12 @@ export default function HomePage() {
         </section>
 
         <section className="panel" style={{ marginTop: 22 }}>
-          <h2>Cambiar contraseña de una veterinaria</h2>
+          <h2>Cambiar contraseña de un negocio</h2>
           <form className="stack-form" onSubmit={handleUpdateClinicPassword}>
             <label>
-              <span>Veterinaria</span>
+              <span>Negocio</span>
               <select value={clinicPasswordForm.clinicId} onChange={(event) => setClinicPasswordForm({ ...clinicPasswordForm, clinicId: event.target.value })}>
-                <option value="">Selecciona una veterinaria</option>
+                <option value="">Selecciona un negocio</option>
                 {appData.clinics.map((clinic) => (
                   <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
                 ))}
@@ -1398,10 +1504,10 @@ export default function HomePage() {
 
       <header className="app-header">
         <div className="brand-logo-wrap">
-          <div className="brand-logo">V</div>
+        <img className="brand-header-logo" src="/andestock-logo.png" alt="AndeStock" />
           <div className="brand-copy">
-            <p className="label-muted">VetStock</p>
-            <h1>{currentClinic?.name ?? 'Veterinaria'}</h1>
+          <p className="label-muted">Inventario del negocio</p>
+            <h1>{currentClinic?.name ?? 'Negocio'}</h1>
           </div>
         </div>
         <button className="secondary-button" onClick={signOut} type="button">Cerrar sesión</button>
@@ -1442,7 +1548,7 @@ export default function HomePage() {
             </div>
 
             <div className="kpi-grid">
-              <div className="mini-metric accent-blue">
+              <div className="mini-metric accent-forest">
                 <span>Ventas Totales</span>
                 <strong>{formatCurrency(totalMonthlySales)}</strong>
                 <small>Ingresos acumulados</small>
@@ -1574,12 +1680,12 @@ export default function HomePage() {
             </div>
 
             {/* Desktop Table View */}
-            <div className="table-wrap">
+            <div className="table-wrap inventory-table">
               <table>
                 <thead>
                   <tr>
                     <th>Foto</th>
-                    <th>Producto</th>
+                    <th>Producto y descripción</th>
                     <th>Categoría</th>
                     <th>Stock</th>
                     <th>Min</th>
@@ -1597,12 +1703,15 @@ export default function HomePage() {
                           {item.image ? (
                             <img src={item.image} alt={item.name} style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 10 }} />
                           ) : (
-                            <span style={{ display: 'inline-flex', width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center', background: '#edf3ff', color: '#2c6df4', fontWeight: 700 }}>
+                            <span                             style={{ display: 'inline-flex', width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center', background: '#edf4e8', color: 'var(--primary)', fontWeight: 700 }}>
                               {item.name.slice(0, 1).toUpperCase()}
                             </span>
                           )}
                         </td>
-                        <td><strong>{item.name}</strong></td>
+                        <td>
+                          <strong>{item.name}</strong>
+                          {item.description ? <small className="product-description">{item.description}</small> : null}
+                        </td>
                         <td>{item.category}</td>
                         <td>
                           <span className={`stock-badge ${item.stock === 0 ? 'out' : item.stock <= item.minStock ? 'low' : 'normal'}`}>
@@ -1641,7 +1750,7 @@ export default function HomePage() {
             </div>
 
             {/* Mobile Cards View (<768px) */}
-            <div className="mobile-card-grid">
+            <div className="mobile-card-grid inventory-card-grid">
               {filteredInventory.length ? (
                 filteredInventory.map((item) => (
                   <div key={item.id} className="product-card">
@@ -1653,7 +1762,8 @@ export default function HomePage() {
                       )}
                       <div className="product-card-meta">
                         <h4 className="product-card-title">{item.name}</h4>
-                        <div className="product-card-category">{item.category}</div>
+                        <span className="product-category-chip">{item.category}</span>
+                        {item.description ? <p className="product-card-description">{item.description}</p> : null}
                         {item.expirationDate && (
                           <small style={{ color: '#d97706', display: 'block', marginTop: 2 }}>
                             ⏳ Vence: {item.expirationDate}
@@ -1698,11 +1808,6 @@ export default function HomePage() {
             </div>
           </div>
 
-          {/* Desktop Form Panel */}
-          <div className="panel desktop-form-panel">
-            <h2>{editingProductId ? 'Editar producto' : 'Agregar producto'}</h2>
-            {renderProductForm(false)}
-          </div>
         </section>
       )}
 
@@ -1722,7 +1827,7 @@ export default function HomePage() {
             </div>
             
             {/* Desktop Table View */}
-            <div className="table-wrap">
+            <div className="table-wrap sales-table">
               <table>
                 <thead>
                   <tr>
@@ -1765,17 +1870,17 @@ export default function HomePage() {
             </div>
 
             {/* Mobile Sales List */}
-            <div className="mobile-card-grid">
+            <div className="mobile-card-grid sales-card-grid">
               {currentClinic?.sales.length ? (
                 currentClinic.sales.map((sale) => (
-                  <div key={sale.id} className="product-card">
+                  <div key={sale.id} className="product-card sale-history-card">
                     <div className="product-card-top">
-                      <div className="product-card-avatar" style={{ background: '#e0f2fe', color: '#0369a1' }}>🛒</div>
+                      <div className="product-card-avatar sale-avatar">↗</div>
                       <div className="product-card-meta">
                         <h4 className="product-card-title">{sale.items?.length ? sale.items.map((item) => `${item.product} × ${item.qty}`).join(', ') : sale.product}</h4>
                         <div className="product-card-category">Cliente: {sale.client} • {sale.date}</div>
                       </div>
-                      <strong>{formatCurrency(sale.total)}</strong>
+                      <strong className="sale-card-total">{formatCurrency(sale.total)}</strong>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                       <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
@@ -1840,8 +1945,25 @@ export default function HomePage() {
                         Quitar
                       </button>
                     ) : null}
+                    <div className="sale-line-subtotal">
+                      {(() => {
+                        const product = currentClinic?.inventory.find((item) => item.id === line.productId);
+                        const quantity = Number(line.quantity);
+                        const lineSubtotal = product && Number.isFinite(quantity) && quantity > 0
+                          ? product.price * quantity
+                          : 0;
+                        return <>Subtotal de línea: <strong>{formatCurrency(lineSubtotal)}</strong></>;
+                      })()}
+                    </div>
                   </div>
                 ))}
+              </div>
+
+              <div className="sale-summary">
+                <span>Subtotal</span>
+                <strong>{formatCurrency(saleSubtotal)}</strong>
+                <span>Total al confirmar</span>
+                <strong>{formatCurrency(saleSubtotal)}</strong>
               </div>
 
               <label>
@@ -1849,11 +1971,11 @@ export default function HomePage() {
                 <input
                   value={saleClientName}
                   onChange={(event) => setSaleClientName(event.target.value)}
-                  placeholder="Ej. Juan Pérez (o dejar Cliente General)"
+                  placeholder="Nombre del cliente (opcional)"
                 />
               </label>
 
-              <button className="primary-button" type="submit">Registrar venta</button>
+              <button className="primary-button" type="submit">Confirmar venta · {formatCurrency(saleSubtotal)}</button>
             </form>
           </div>
         </section>
@@ -1871,12 +1993,88 @@ export default function HomePage() {
         </button>
       )}
 
-      {/* Mobile Form Drawer / Modal Overlay */}
+      {pendingSale && (
+        <div className="modal-overlay sale-confirm-overlay" onClick={() => setPendingSale(null)}>
+          <section
+            className="sale-confirm-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sale-confirm-title"
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !isConfirmingSale) setPendingSale(null);
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="sale-confirm-header">
+              <div className="sale-confirm-icon" aria-hidden="true">✓</div>
+              <div>
+                <span className="modal-kicker">RESUMEN DE VENTA</span>
+                <h2 id="sale-confirm-title">¿Confirmamos esta venta?</h2>
+                <p>Revisa los productos y el total antes de registrarla.</p>
+              </div>
+              <button
+                type="button"
+                className="close-modal-btn"
+                aria-label="Cerrar confirmación"
+                disabled={isConfirmingSale}
+                onClick={() => setPendingSale(null)}
+              >
+                ✕
+              </button>
+            </header>
+
+            <div className="sale-confirm-body">
+              <div className="sale-confirm-list">
+                {pendingSale.items.map((item) => (
+                  <article className="sale-confirm-item" key={item.productId}>
+                    <div className="sale-confirm-item-icon" aria-hidden="true">▦</div>
+                    <div className="sale-confirm-item-copy">
+                      <strong>{item.product}</strong>
+                      <span>{item.qty} {item.qty === 1 ? 'unidad' : 'unidades'} × {formatCurrency(item.unitPrice)}</span>
+                    </div>
+                    <strong className="sale-confirm-item-total">{formatCurrency(item.total)}</strong>
+                  </article>
+                ))}
+              </div>
+
+              <div className="sale-confirm-totals">
+                <div>
+                  <span>Productos</span>
+                  <strong>{pendingSale.totalQuantity} {pendingSale.totalQuantity === 1 ? 'unidad' : 'unidades'}</strong>
+                </div>
+                <div>
+                  <span>Cliente</span>
+                  <strong>{pendingSale.client}</strong>
+                </div>
+                <div className="sale-confirm-grand-total">
+                  <span>Total a cobrar</span>
+                  <strong>{formatCurrency(pendingSale.total)}</strong>
+                </div>
+              </div>
+
+              <div className="sale-confirm-actions">
+                <button type="button" className="secondary-button" disabled={isConfirmingSale} onClick={() => setPendingSale(null)}>
+                  Volver a editar
+                </button>
+                <button type="button" className="primary-button" disabled={isConfirmingSale} onClick={handleConfirmSale}>
+                  {isConfirmingSale ? 'Registrando venta…' : 'Confirmar venta'}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* Product editor modal */}
       {isProductModalOpen && (
         <div className="modal-overlay" onClick={() => setIsProductModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>{editingProductId ? 'Editar producto' : 'Agregar nuevo producto'}</h3>
+          <div className="modal-content product-modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header product-modal-header">
+              <div>
+                <span className="modal-kicker">CATÁLOGO DE ANDESSTOCK</span>
+                <h3>{editingProductId ? 'Editar producto' : 'Nuevo producto'}</h3>
+              </div>
               <button
                 type="button"
                 className="close-modal-btn"

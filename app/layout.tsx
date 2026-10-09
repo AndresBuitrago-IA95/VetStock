@@ -2,16 +2,16 @@ import './globals.css';
 import type { Metadata, Viewport } from 'next';
 
 export const metadata: Metadata = {
-  title: 'VetStock | Sistema de gestión para clínicas y veterinarias',
+  title: 'AndeStock | Inventarios para Andes, Antioquia',
   description:
-    'VetStock ayuda a clínicas y veterinarias a gestionar ventas, inventario, clientes, agenda y reportes desde un solo lugar.',
+    'AndeStock ayuda a los negocios de Andes, Antioquia, a gestionar productos, inventarios y ventas desde un solo lugar.',
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
-  themeColor: '#2c6df4',
+  themeColor: '#356b45',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -26,4 +26,3 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     </html>
   );
 }
-

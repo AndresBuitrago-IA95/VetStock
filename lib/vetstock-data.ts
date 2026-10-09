@@ -1,8 +1,9 @@
-import { Redis } from '@upstash/redis';
+import { neon } from '@neondatabase/serverless';
 
 export type Product = {
   id: string;
   name: string;
+  description?: string;
   category: string;
   stock: number;
   minStock: number;
@@ -108,55 +109,83 @@ export type AppState = {
   clinics: Clinic[];
 };
 
-export const defaultAppState: AppState = {
-  updatedAt: 1,
-  superAdmin: {
-    id: 'superadmin-1',
-    name: 'Super Admin',
-    email: 'admin@vetstock.com',
-    password: 'admin123',
-    role: 'superadmin',
-  },
-  clinics: [],
-};
+const STATE_ROW_ID = 1;
 
-const REDIS_KEY = 'vetstock:appstate';
-
-// In-memory cache: acts as a fast read layer and last-resort fallback
-let memoryCache: AppState | null = null;
-
-function getRedisClient(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  return new Redis({ url, token });
+function rethrowConfigurationError(error: unknown, fallback: string): never {
+  if (
+    error instanceof Error &&
+    (error.message.startsWith('Falta configurar') ||
+      error.message.startsWith('Configura INITIAL_ADMIN_') ||
+      error.message.startsWith('INITIAL_ADMIN_PASSWORD'))
+  ) {
+    throw error;
+  }
+  throw new Error(fallback);
 }
 
-export function hasSharedPersistenceConfigured(): boolean {
-  return Boolean(process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN);
+function getInitialAppState(): AppState {
+  const email = process.env.INITIAL_ADMIN_EMAIL?.trim();
+  const password = process.env.INITIAL_ADMIN_PASSWORD;
+  if (!email || !password) {
+    throw new Error('Configura INITIAL_ADMIN_EMAIL e INITIAL_ADMIN_PASSWORD para crear el superadmin inicial.');
+  }
+  if (password.length < 12) {
+    throw new Error('INITIAL_ADMIN_PASSWORD debe tener al menos 12 caracteres.');
+  }
+  return {
+    updatedAt: 1,
+    superAdmin: {
+      id: 'superadmin-1',
+      name: 'Super Admin',
+      email,
+      password,
+      role: 'superadmin',
+    },
+    clinics: [],
+  };
+}
+
+function getDatabaseUrl(): string {
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (!url) {
+    throw new Error('Falta configurar DATABASE_URL o POSTGRES_URL para conectar AndeStock con Neon.');
+  }
+  return url;
+}
+
+async function getSql() {
+  const sql = neon(getDatabaseUrl());
+  await sql`
+    CREATE TABLE IF NOT EXISTS andestock_app_state (
+      id SMALLINT PRIMARY KEY CHECK (id = 1),
+      state JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  const existing = await sql`SELECT id FROM andestock_app_state WHERE id = ${STATE_ROW_ID}`;
+  if (!existing.length) {
+    await sql`
+      INSERT INTO andestock_app_state (id, state)
+      VALUES (${STATE_ROW_ID}, ${JSON.stringify(getInitialAppState())}::jsonb)
+      ON CONFLICT (id) DO NOTHING
+    `;
+  }
+  return sql;
 }
 
 export async function readAppStateFile(): Promise<AppState> {
-  const redis = getRedisClient();
-
-  if (redis) {
-    try {
-      const data = await redis.get<AppState>(REDIS_KEY);
-      if (data && typeof data === 'object' && Array.isArray(data.clinics)) {
-        memoryCache = data as AppState;
-        return memoryCache;
-      }
-    } catch (err) {
-      console.error('Redis read error:', err);
-      throw new Error('No se pudo consultar el almacenamiento compartido.');
+  try {
+    const sql = await getSql();
+    const rows = await sql`SELECT state FROM andestock_app_state WHERE id = ${STATE_ROW_ID}`;
+    const state = rows[0]?.state as AppState | undefined;
+    if (!state || !state.superAdmin || !Array.isArray(state.clinics)) {
+      throw new Error('La estructura de datos almacenada en Neon no es válida.');
     }
+    return state;
+  } catch (error) {
+    console.error('Neon read error:', error);
+    rethrowConfigurationError(error, 'No se pudo leer el estado en Neon. Verifica la conexión y la tabla de AndeStock.');
   }
-
-  if (memoryCache && Array.isArray(memoryCache.clinics)) {
-    return memoryCache;
-  }
-
-  return defaultAppState;
 }
 
 export async function writeAppStateFile(data: AppState): Promise<AppState> {
@@ -165,19 +194,19 @@ export async function writeAppStateFile(data: AppState): Promise<AppState> {
     updatedAt: Date.now(),
   };
 
-  // Always update memory cache first so reads are consistent even if Redis is slow
-  memoryCache = stampedData;
-
-  const redis = getRedisClient();
-  if (redis) {
-    try {
-      await redis.set(REDIS_KEY, JSON.stringify(stampedData));
-    } catch (err) {
-      console.error('Redis write error (data preserved in memory cache):', err);
-    }
+  try {
+    const sql = await getSql();
+    await sql`
+      INSERT INTO andestock_app_state (id, state, updated_at)
+      VALUES (${STATE_ROW_ID}, ${JSON.stringify(stampedData)}::jsonb, NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET state = EXCLUDED.state, updated_at = EXCLUDED.updated_at
+    `;
+    return stampedData;
+  } catch (error) {
+    console.error('Neon write error:', error);
+    rethrowConfigurationError(error, 'No se pudo guardar el estado en Neon. Los cambios no fueron confirmados.');
   }
-
-  return stampedData;
 }
 
 export function authenticateUser(email: string, password: string, data: AppState): Session | null {
@@ -210,16 +239,4 @@ export function authenticateUser(email: string, password: string, data: AppState
     clinicId: clinic.id,
     name: clinic.name,
   };
-}
-
-export function getSessionFromCookieValue(value: string | undefined): Session | null {
-  if (!value) return null;
-
-  try {
-    const parsed = JSON.parse(decodeURIComponent(value)) as Session;
-    if (!parsed || !parsed.userId || !parsed.role || !parsed.name) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
 }
