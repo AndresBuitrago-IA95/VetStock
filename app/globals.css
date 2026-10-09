@@ -463,6 +463,80 @@ a { text-decoration: none; }
   color: var(--primary-dark);
 }
 
+.sale-payment-fields {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.sale-payment-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.sale-payment-callout {
+  display: grid;
+  gap: 7px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f5f8f0, #f8f3e6);
+}
+
+.sale-payment-callout strong {
+  color: var(--primary-dark);
+}
+
+.sale-payment-modal {
+  width: min(100%, 520px);
+  padding-bottom: 24px;
+}
+
+.sale-payment-modal-form {
+  padding: 0 26px;
+}
+
+.sale-payment-history {
+  display: grid;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+.sale-payment-history small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.sale-payment-button {
+  width: auto;
+  margin-top: 7px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: rgba(8, 115, 75, 0.1);
+  color: var(--primary-dark);
+  font-weight: 750;
+}
+
+.sale-card-payment-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0 4px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.sale-card-payment-info strong {
+  color: var(--primary-dark);
+}
+
 .sale-summary span:nth-of-type(2),
 .sale-summary strong:nth-of-type(2) {
   padding-top: 8px;

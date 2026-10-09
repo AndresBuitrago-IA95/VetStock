@@ -22,6 +22,15 @@ export type SaleItem = {
   total: number;
 };
 
+export type SalePaymentMethod = 'efectivo' | 'transferencia' | 'credito';
+
+export type SalePayment = {
+  id: string;
+  amount: number;
+  date: string;
+  method: Exclude<SalePaymentMethod, 'credito'>;
+};
+
 export type Sale = {
   id: string;
   product: string;
@@ -29,6 +38,13 @@ export type Sale = {
   total: number;
   date: string;
   client: string;
+  buyerDocument?: string;
+  paymentMethod?: SalePaymentMethod;
+  cashReceived?: number;
+  changeGiven?: number;
+  installmentCount?: number;
+  installmentAmount?: number;
+  payments?: SalePayment[];
   items?: SaleItem[];
 };
 

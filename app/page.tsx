@@ -24,6 +24,15 @@ type SaleItem = {
   total: number;
 };
 
+type SalePaymentMethod = 'efectivo' | 'transferencia' | 'credito';
+
+type SalePayment = {
+  id: string;
+  amount: number;
+  date: string;
+  method: Exclude<SalePaymentMethod, 'credito'>;
+};
+
 type Sale = {
   id: string;
   product: string;
@@ -31,6 +40,13 @@ type Sale = {
   total: number;
   date: string;
   client: string;
+  buyerDocument?: string;
+  paymentMethod?: SalePaymentMethod;
+  cashReceived?: number;
+  changeGiven?: number;
+  installmentCount?: number;
+  installmentAmount?: number;
+  payments?: SalePayment[];
   items?: SaleItem[];
 };
 
@@ -215,6 +231,20 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
+function getLocalDate() {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+}
+
+function getSalePaidAmount(sale: Sale) {
+  if (sale.payments) return sale.payments.reduce((total, payment) => total + payment.amount, 0);
+  return sale.paymentMethod === 'credito' ? 0 : sale.total;
+}
+
+function getSaleBalance(sale: Sale) {
+  return Math.max(0, sale.total - getSalePaidAmount(sale));
+}
+
 export default function HomePage() {
   const [appData, setAppData] = useState<AppState>(defaultData);
   const [session, setSession] = useState<Session | null>(null);
@@ -251,14 +281,30 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = useState<TabKey>('Dashboard');
   const [saleLines, setSaleLines] = useState([{ productId: '', quantity: '1' }]);
   const [saleClientName, setSaleClientName] = useState('');
+  const [saleBuyerDocument, setSaleBuyerDocument] = useState('');
+  const [salePaymentMethod, setSalePaymentMethod] = useState<SalePaymentMethod>('efectivo');
+  const [saleCashReceived, setSaleCashReceived] = useState('');
+  const [saleInstallmentCount, setSaleInstallmentCount] = useState('');
+  const [saleInstallmentAmount, setSaleInstallmentAmount] = useState('');
   const [isCategoryMenuOpen, setIsCategoryMenuOpen] = useState(false);
   const [isConfirmingSale, setIsConfirmingSale] = useState(false);
+  const [paymentSaleId, setPaymentSaleId] = useState<string | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentDate, setPaymentDate] = useState(getLocalDate);
+  const [paymentMethod, setPaymentMethod] = useState<Exclude<SalePaymentMethod, 'credito'>>('efectivo');
+  const [isRecordingPayment, setIsRecordingPayment] = useState(false);
   const [pendingSale, setPendingSale] = useState<{
     items: SaleItem[];
     total: number;
     productSummary: string;
     totalQuantity: number;
     client: string;
+    buyerDocument: string;
+    paymentMethod: SalePaymentMethod;
+    cashReceived: number;
+    changeGiven: number;
+    installmentCount?: number;
+    installmentAmount?: number;
   } | null>(null);
   const [toast, setToast] = useState<ToastNotification | null>(null);
 
@@ -878,19 +924,60 @@ export default function HomePage() {
     const total = saleItems.reduce((sum, item) => sum + item.total, 0);
     const productSummary = saleItems.map((item) => item.product).join(', ');
     const totalQuantity = saleItems.reduce((sum, item) => sum + item.qty, 0);
+    const client = saleClientName.trim();
+    const buyerDocument = saleBuyerDocument.trim();
+    if (!client || !buyerDocument) {
+      showToast('Ingresa el nombre y documento de quien compra', 'error');
+      return;
+    }
+
+    const cashReceived = salePaymentMethod === 'efectivo' ? Number(saleCashReceived) : 0;
+    const changeGiven = cashReceived - total;
+    if (salePaymentMethod === 'efectivo' && (!Number.isFinite(cashReceived) || cashReceived < total)) {
+      showToast('El efectivo recibido debe ser igual o mayor al total de la venta', 'error');
+      return;
+    }
+
+    const installmentCount = Number(saleInstallmentCount);
+    const installmentAmount = Number(saleInstallmentAmount);
+    if (
+      salePaymentMethod === 'credito' &&
+      (!Number.isInteger(installmentCount) || installmentCount < 1 || !Number.isFinite(installmentAmount) || installmentAmount <= 0)
+    ) {
+      showToast('Ingresa un número de cuotas y un valor de cuota válidos', 'error');
+      return;
+    }
+
     setPendingSale({
       items: saleItems,
       total,
       productSummary,
       totalQuantity,
-      client: saleClientName.trim() || 'Cliente general',
+      client,
+      buyerDocument,
+      paymentMethod: salePaymentMethod,
+      cashReceived,
+      changeGiven,
+      ...(salePaymentMethod === 'credito' ? { installmentCount, installmentAmount } : {}),
     });
   };
 
   const handleConfirmSale = async () => {
     if (!currentClinic || !pendingSale || isConfirmingSale) return;
 
-    const { items: saleItems, total, productSummary, totalQuantity, client } = pendingSale;
+    const {
+      items: saleItems,
+      total,
+      productSummary,
+      totalQuantity,
+      client,
+      buyerDocument,
+      paymentMethod: method,
+      cashReceived,
+      changeGiven,
+      installmentCount,
+      installmentAmount,
+    } = pendingSale;
     const stockConflict = saleItems.find((saleItem) => {
       const product = currentClinic.inventory.find((item) => item.id === saleItem.productId);
       return !product || product.stock < saleItem.qty;
@@ -902,7 +989,7 @@ export default function HomePage() {
     }
 
     const saleId = `sale-${Date.now()}`;
-    const saleDate = new Date().toISOString().slice(0, 10);
+    const saleDate = getLocalDate();
 
     const nextState = updateClinicInState(appData, currentClinic.id, (clinic) => {
       const quantitiesByProduct = new Map(saleItems.map((item) => [item.productId, item.qty] as const));
@@ -918,10 +1005,17 @@ export default function HomePage() {
         total,
         date: saleDate,
         client,
+        buyerDocument,
+        paymentMethod: method,
+        ...(method === 'efectivo' ? { cashReceived, changeGiven } : {}),
+        ...(method === 'credito' ? { installmentCount, installmentAmount } : {}),
+        payments: method === 'credito'
+          ? []
+          : [{ id: `payment-${saleId}`, amount: total, date: saleDate, method }],
         items: saleItems,
       };
 
-      const newCashEntry: CashEntry = {
+      const newCashEntry: CashEntry | null = method === 'credito' ? null : {
         id: `cash-${saleId}`,
         type: 'ingreso',
         description: `Venta de ${productSummary}`,
@@ -934,7 +1028,7 @@ export default function HomePage() {
         ...clinic,
         inventory: updatedInventory,
         sales: [newSale, ...(clinic.sales || [])],
-        cashFlow: [newCashEntry, ...(clinic.cashFlow || [])],
+        cashFlow: newCashEntry ? [newCashEntry, ...(clinic.cashFlow || [])] : clinic.cashFlow || [],
       };
     });
 
@@ -945,8 +1039,75 @@ export default function HomePage() {
       showToast(`¡Venta de ${saleItems.length} producto(s) registrada!`, 'success');
       setSaleLines([{ productId: '', quantity: '1' }]);
       setSaleClientName('');
+      setSaleBuyerDocument('');
+      setSaleCashReceived('');
+      setSaleInstallmentCount('');
+      setSaleInstallmentAmount('');
     } finally {
       setIsConfirmingSale(false);
+    }
+  };
+
+  const handleOpenPayment = (sale: Sale) => {
+    setPaymentSaleId(sale.id);
+    setPaymentAmount(String(getSaleBalance(sale)));
+    setPaymentDate(getLocalDate());
+    setPaymentMethod('efectivo');
+  };
+
+  const handleRegisterPayment = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!currentClinic || !paymentSaleId || isRecordingPayment) return;
+
+    const sale = currentClinic.sales.find((item) => item.id === paymentSaleId);
+    const amount = Number(paymentAmount);
+    if (!sale || sale.paymentMethod !== 'credito') {
+      showToast('No se encontró la venta a crédito seleccionada', 'error');
+      return;
+    }
+    const balance = getSaleBalance(sale);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > balance) {
+      showToast(`El abono debe ser mayor a 0 y no superar el saldo de ${formatCurrency(balance)}`, 'error');
+      return;
+    }
+    if (!paymentDate) {
+      showToast('Selecciona la fecha del abono', 'error');
+      return;
+    }
+
+    const payment: SalePayment = {
+      id: `payment-${Date.now()}`,
+      amount,
+      date: paymentDate,
+      method: paymentMethod,
+    };
+    const nextState = updateClinicInState(appData, currentClinic.id, (clinic) => ({
+      ...clinic,
+      sales: clinic.sales.map((item) =>
+        item.id === sale.id
+          ? { ...item, payments: [...(item.payments || []), payment] }
+          : item,
+      ),
+      cashFlow: [
+        {
+          id: `cash-${payment.id}`,
+          type: 'ingreso',
+          description: `Abono a venta ${sale.id} - ${sale.client}`,
+          amount,
+          date: paymentDate,
+          saleId: sale.id,
+        },
+        ...(clinic.cashFlow || []),
+      ],
+    }));
+
+    setIsRecordingPayment(true);
+    try {
+      if (!(await updateStateAndSync(nextState))) return;
+      setPaymentSaleId(null);
+      showToast('Abono registrado y saldo actualizado', 'success');
+    } finally {
+      setIsRecordingPayment(false);
     }
   };
 
@@ -1029,15 +1190,19 @@ export default function HomePage() {
       return;
     }
 
-    const headers = ['ID Venta', 'Producto', 'Cantidad', 'Cliente', 'Total (COP)', 'Fecha'];
-    const rows = currentClinic.sales.flatMap((sale) => (sale.items?.length ? sale.items : [{ product: sale.product, qty: sale.qty, total: sale.total }]).map((item) => [
+    const headers = ['ID Venta', 'Producto', 'Cantidad', 'Cliente', 'Documento', 'Método de pago', 'Total (COP)', 'Pagado (COP)', 'Saldo (COP)', 'Fecha'];
+    const rows = currentClinic.sales.map((sale) => [
       sale.id,
-      `"${item.product.replace(/"/g, '""')}"`,
-      item.qty,
+      `"${sale.product.replace(/"/g, '""')}"`,
+      sale.qty,
       `"${sale.client.replace(/"/g, '""')}"`,
-      item.total,
+      `"${(sale.buyerDocument || '').replace(/"/g, '""')}"`,
+      sale.paymentMethod || 'No especificado',
+      sale.total,
+      getSalePaidAmount(sale),
+      getSaleBalance(sale),
       sale.date,
-    ]));
+    ]);
 
     const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
@@ -1834,7 +1999,9 @@ export default function HomePage() {
                     <th>Producto</th>
                     <th>Cantidad</th>
                     <th>Cliente</th>
+                    <th>Pago</th>
                     <th>Total</th>
+                    <th>Pagado / saldo</th>
                     <th>Fecha</th>
                     <th>Acciones</th>
                   </tr>
@@ -1845,8 +2012,17 @@ export default function HomePage() {
                       <tr key={sale.id}>
                         <td><strong>{sale.items?.length ? sale.items.map((item) => `${item.product} × ${item.qty}`).join(', ') : sale.product}</strong></td>
                         <td>{sale.qty}</td>
-                        <td>{sale.client}</td>
+                        <td>{sale.client}<br /><small>{sale.buyerDocument || 'Documento no registrado'}</small></td>
+                        <td>{sale.paymentMethod || 'No especificado'}{sale.installmentCount ? <><br /><small>{sale.installmentCount} cuotas de {formatCurrency(sale.installmentAmount || 0)}</small></> : null}</td>
                         <td>{formatCurrency(sale.total)}</td>
+                        <td>
+                          <strong>{formatCurrency(getSalePaidAmount(sale))}</strong>
+                          <br /><small>Saldo: {formatCurrency(getSaleBalance(sale))}</small>
+                          {sale.payments?.length ? <div className="sale-payment-history">{sale.payments.map((payment) => <small key={payment.id}>{payment.date}: {formatCurrency(payment.amount)} ({payment.method})</small>)}</div> : null}
+                          {sale.paymentMethod === 'credito' && getSaleBalance(sale) > 0 ? (
+                            <button type="button" className="tiny-button sale-payment-button" onClick={() => handleOpenPayment(sale)}>Registrar abono</button>
+                          ) : null}
+                        </td>
                         <td>{sale.date}</td>
                         <td>
                           <button
@@ -1862,7 +2038,7 @@ export default function HomePage() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={6} className="empty-state">Todavía no hay ventas registradas.</td>
+                      <td colSpan={8} className="empty-state">Todavía no hay ventas registradas.</td>
                     </tr>
                   )}
                 </tbody>
@@ -1878,14 +2054,28 @@ export default function HomePage() {
                       <div className="product-card-avatar sale-avatar">↗</div>
                       <div className="product-card-meta">
                         <h4 className="product-card-title">{sale.items?.length ? sale.items.map((item) => `${item.product} × ${item.qty}`).join(', ') : sale.product}</h4>
-                        <div className="product-card-category">Cliente: {sale.client} • {sale.date}</div>
+                        <div className="product-card-category">Cliente: {sale.client} • Documento: {sale.buyerDocument || 'No registrado'} • {sale.date}</div>
                       </div>
                       <strong className="sale-card-total">{formatCurrency(sale.total)}</strong>
                     </div>
+                    <div className="sale-card-payment-info">
+                      <span>Pago: <strong>{sale.paymentMethod || 'No especificado'}</strong></span>
+                      <span>Pagado: <strong>{formatCurrency(getSalePaidAmount(sale))}</strong></span>
+                      <span>Saldo: <strong>{formatCurrency(getSaleBalance(sale))}</strong></span>
+                      {sale.installmentCount ? <span>Plan: {sale.installmentCount} cuotas de {formatCurrency(sale.installmentAmount || 0)}</span> : null}
+                    </div>
+                    {sale.payments?.length ? (
+                      <div className="sale-payment-history">
+                        {sale.payments.map((payment) => <small key={payment.id}>{payment.date}: {formatCurrency(payment.amount)} ({payment.method})</small>)}
+                      </div>
+                    ) : null}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
                       <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>
                         Cantidad total: <strong>{sale.qty} ud(s)</strong>
                       </span>
+                      {sale.paymentMethod === 'credito' && getSaleBalance(sale) > 0 ? (
+                        <button type="button" className="tiny-button sale-payment-button" onClick={() => handleOpenPayment(sale)}>Registrar abono</button>
+                      ) : null}
                       <button
                         type="button"
                         className="tiny-button delete"
@@ -1967,13 +2157,83 @@ export default function HomePage() {
               </div>
 
               <label>
-                <span>Cliente</span>
+                <span>Nombre de quien compra *</span>
                 <input
                   value={saleClientName}
                   onChange={(event) => setSaleClientName(event.target.value)}
-                  placeholder="Nombre del cliente (opcional)"
+                  placeholder="Nombre completo"
+                  required
                 />
               </label>
+
+              <label>
+                <span>Documento de quien compra *</span>
+                <input
+                  value={saleBuyerDocument}
+                  onChange={(event) => setSaleBuyerDocument(event.target.value)}
+                  placeholder="Cédula o documento"
+                  maxLength={30}
+                  required
+                />
+              </label>
+
+              <label>
+                <span>Método de pago *</span>
+                <select value={salePaymentMethod} onChange={(event) => setSalePaymentMethod(event.target.value as SalePaymentMethod)}>
+                  <option value="efectivo">Efectivo</option>
+                  <option value="transferencia">Transferencia</option>
+                  <option value="credito">Crédito</option>
+                </select>
+              </label>
+
+              {salePaymentMethod === 'efectivo' ? (
+                <>
+                  <label>
+                    <span>¿Cuánto paga en efectivo? *</span>
+                    <input
+                      type="number"
+                      min={saleSubtotal}
+                      step="any"
+                      value={saleCashReceived}
+                      onChange={(event) => setSaleCashReceived(event.target.value)}
+                      required
+                    />
+                  </label>
+                  {saleCashReceived && Number.isFinite(Number(saleCashReceived)) ? (
+                    <div className="sale-payment-callout">
+                      Devolver: <strong>{formatCurrency(Math.max(0, Number(saleCashReceived) - saleSubtotal))}</strong>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+
+              {salePaymentMethod === 'credito' ? (
+                <div className="sale-payment-fields">
+                  <label>
+                    <span>Número de cuotas *</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={saleInstallmentCount}
+                      onChange={(event) => setSaleInstallmentCount(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    <span>Valor de cada cuota *</span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="any"
+                      value={saleInstallmentAmount}
+                      onChange={(event) => setSaleInstallmentAmount(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <p className="sale-payment-note">El saldo inicial será {formatCurrency(saleSubtotal)}. Podrás registrar cada abono y consultar el saldo pendiente.</p>
+                </div>
+              ) : null}
 
               <button className="primary-button" type="submit">Confirmar venta · {formatCurrency(saleSubtotal)}</button>
             </form>
@@ -2045,8 +2305,30 @@ export default function HomePage() {
                 </div>
                 <div>
                   <span>Cliente</span>
-                  <strong>{pendingSale.client}</strong>
+                  <strong>{pendingSale.client} · {pendingSale.buyerDocument}</strong>
                 </div>
+                <div>
+                  <span>Método de pago</span>
+                  <strong>{pendingSale.paymentMethod}</strong>
+                </div>
+                {pendingSale.paymentMethod === 'efectivo' ? (
+                  <div>
+                    <span>Efectivo recibido · devolver</span>
+                    <strong>{formatCurrency(pendingSale.cashReceived)} · {formatCurrency(pendingSale.changeGiven)}</strong>
+                  </div>
+                ) : null}
+                {pendingSale.paymentMethod === 'credito' ? (
+                  <div>
+                    <span>Plan de crédito</span>
+                    <strong>{pendingSale.installmentCount} cuotas de {formatCurrency(pendingSale.installmentAmount || 0)}</strong>
+                  </div>
+                ) : null}
+                {pendingSale.paymentMethod === 'credito' ? (
+                  <div>
+                    <span>Saldo inicial</span>
+                    <strong>{formatCurrency(pendingSale.total)}</strong>
+                  </div>
+                ) : null}
                 <div className="sale-confirm-grand-total">
                   <span>Total a cobrar</span>
                   <strong>{formatCurrency(pendingSale.total)}</strong>
@@ -2062,6 +2344,52 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
+          </section>
+        </div>
+      )}
+
+      {paymentSaleId && currentClinic && (
+        <div className="modal-overlay" onClick={() => !isRecordingPayment && setPaymentSaleId(null)}>
+          <section className="modal-content sale-payment-modal" role="dialog" aria-modal="true" aria-labelledby="payment-modal-title" onClick={(event) => event.stopPropagation()}>
+            <header className="modal-header">
+              <div>
+                <span className="modal-kicker">SEGUIMIENTO DE CRÉDITO</span>
+                <h3 id="payment-modal-title">Registrar abono</h3>
+              </div>
+              <button type="button" className="close-modal-btn" aria-label="Cerrar" disabled={isRecordingPayment} onClick={() => setPaymentSaleId(null)}>✕</button>
+            </header>
+            {(() => {
+              const sale = currentClinic.sales.find((item) => item.id === paymentSaleId);
+              if (!sale) return <p className="sale-payment-note">No se encontró la venta seleccionada.</p>;
+              const balance = getSaleBalance(sale);
+              return (
+                <form className="stack-form sale-payment-modal-form" onSubmit={handleRegisterPayment}>
+                  <div className="sale-payment-callout">
+                    <span>{sale.client} · {sale.buyerDocument || 'Documento no registrado'}</span>
+                    <span>Saldo pendiente: <strong>{formatCurrency(balance)}</strong></span>
+                  </div>
+                  <label>
+                    <span>Valor del abono *</span>
+                    <input type="number" min="0.01" max={balance} step="any" value={paymentAmount} onChange={(event) => setPaymentAmount(event.target.value)} required />
+                  </label>
+                  <label>
+                    <span>Fecha del abono *</span>
+                    <input type="date" value={paymentDate} onChange={(event) => setPaymentDate(event.target.value)} required />
+                  </label>
+                  <label>
+                    <span>Método del abono *</span>
+                    <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as Exclude<SalePaymentMethod, 'credito'>)}>
+                      <option value="efectivo">Efectivo</option>
+                      <option value="transferencia">Transferencia</option>
+                    </select>
+                  </label>
+                  <div className="sale-confirm-actions">
+                    <button type="button" className="secondary-button" disabled={isRecordingPayment} onClick={() => setPaymentSaleId(null)}>Cancelar</button>
+                    <button type="submit" className="primary-button" disabled={isRecordingPayment}>{isRecordingPayment ? 'Guardando abono…' : 'Guardar abono'}</button>
+                  </div>
+                </form>
+              );
+            })()}
           </section>
         </div>
       )}
