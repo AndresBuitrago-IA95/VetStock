@@ -463,6 +463,64 @@ a { text-decoration: none; }
   color: var(--primary-dark);
 }
 
+.payment-summary-section {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0 20px;
+}
+
+.payment-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.payment-summary-card {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(145deg, #fff, #f5f8f0);
+}
+
+.payment-summary-card > span,
+.payment-summary-card > small {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.payment-summary-card > span {
+  font-size: 0.78rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.payment-summary-card > strong {
+  color: var(--primary-dark);
+  font-size: clamp(1.05rem, 2vw, 1.35rem);
+  overflow-wrap: anywhere;
+}
+
+.payment-summary-card.payment-efectivo {
+  border-top: 3px solid var(--success);
+}
+
+.payment-summary-card.payment-transferencia {
+  border-top: 3px solid var(--blue);
+}
+
+.payment-summary-card.payment-credito {
+  border-top: 3px solid var(--warning);
+}
+
+.sales-payment-summary {
+  margin-top: 0;
+}
+
 .sale-payment-fields {
   display: grid;
   gap: 14px;
@@ -512,6 +570,50 @@ a { text-decoration: none; }
   color: var(--muted);
   font-size: 0.76rem;
   line-height: 1.4;
+}
+
+.next-installment-date {
+  display: block;
+  margin-top: 4px;
+  color: #a16207;
+}
+
+.credit-alert-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.credit-alert-list {
+  display: grid;
+  gap: 9px;
+}
+
+.credit-alert-item {
+  display: grid;
+  gap: 4px;
+  padding: 11px 13px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 13px;
+  background: #fffbeb;
+}
+
+.credit-alert-item strong {
+  color: #a16207;
+}
+
+.credit-alert-item span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.credit-alert-item.is-overdue {
+  border-color: rgba(239, 68, 68, 0.32);
+  background: #fff5f5;
+}
+
+.credit-alert-item.is-overdue strong {
+  color: #b91c1c;
 }
 
 .sale-payment-button {
@@ -873,6 +975,11 @@ th {
 .tag-chip.neutral {
   background: rgba(100, 116, 139, 0.08);
   color: var(--muted);
+}
+
+.tag-chip.danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #b91c1c;
 }
 
 .alert-item span,
@@ -1675,6 +1782,10 @@ th {
   }
 
   .summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .payment-summary-grid {
     grid-template-columns: 1fr;
   }
 

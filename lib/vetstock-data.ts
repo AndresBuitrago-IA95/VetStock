@@ -44,6 +44,7 @@ export type Sale = {
   changeGiven?: number;
   installmentCount?: number;
   installmentAmount?: number;
+  firstInstallmentDate?: string;
   payments?: SalePayment[];
   items?: SaleItem[];
 };

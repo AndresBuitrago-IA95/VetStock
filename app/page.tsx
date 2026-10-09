@@ -46,6 +46,7 @@ type Sale = {
   changeGiven?: number;
   installmentCount?: number;
   installmentAmount?: number;
+  firstInstallmentDate?: string;
   payments?: SalePayment[];
   items?: SaleItem[];
 };
@@ -245,6 +246,43 @@ function getSaleBalance(sale: Sale) {
   return Math.max(0, sale.total - getSalePaidAmount(sale));
 }
 
+function addMonthsToDate(date: string, months: number) {
+  const [year, month, day] = date.split('-').map(Number);
+  const targetMonth = month - 1 + months;
+  const lastDay = new Date(year, targetMonth + 1, 0).getDate();
+  const dueDate = new Date(year, targetMonth, Math.min(day, lastDay));
+  return `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(dueDate.getDate()).padStart(2, '0')}`;
+}
+
+function addDaysToDate(date: string, days: number) {
+  const [year, month, day] = date.split('-').map(Number);
+  const result = new Date(year, month - 1, day + days);
+  return `${result.getFullYear()}-${String(result.getMonth() + 1).padStart(2, '0')}-${String(result.getDate()).padStart(2, '0')}`;
+}
+
+function getSaleInstallmentSchedule(sale: Sale) {
+  const count = Math.max(1, Math.floor(sale.installmentCount || 1));
+  const plannedAmount = sale.installmentAmount && sale.installmentAmount > 0
+    ? sale.installmentAmount
+    : sale.total;
+  let remainingTotal = sale.total;
+  let remainingPaid = getSalePaidAmount(sale);
+
+  return Array.from({ length: count }, (_, index) => {
+    const amount = index === count - 1
+      ? remainingTotal
+      : Math.min(plannedAmount, remainingTotal);
+    remainingTotal = Math.max(0, remainingTotal - amount);
+    const paid = Math.min(amount, remainingPaid);
+    remainingPaid = Math.max(0, remainingPaid - paid);
+    return {
+      dueDate: addMonthsToDate(sale.firstInstallmentDate || sale.date, index),
+      amount,
+      balance: Math.max(0, amount - paid),
+    };
+  }).filter((installment) => installment.amount > 0);
+}
+
 export default function HomePage() {
   const [appData, setAppData] = useState<AppState>(defaultData);
   const [session, setSession] = useState<Session | null>(null);
@@ -279,13 +317,14 @@ export default function HomePage() {
 
   // UI state
   const [activeTab, setActiveTab] = useState<TabKey>('Dashboard');
-  const [saleLines, setSaleLines] = useState([{ productId: '', quantity: '1' }]);
+  const [saleLines, setSaleLines] = useState([{ productId: '', quantity: '1', productSearch: '' }]);
   const [saleClientName, setSaleClientName] = useState('');
   const [saleBuyerDocument, setSaleBuyerDocument] = useState('');
   const [salePaymentMethod, setSalePaymentMethod] = useState<SalePaymentMethod>('efectivo');
   const [saleCashReceived, setSaleCashReceived] = useState('');
   const [saleInstallmentCount, setSaleInstallmentCount] = useState('');
   const [saleInstallmentAmount, setSaleInstallmentAmount] = useState('');
+  const [saleFirstInstallmentDate, setSaleFirstInstallmentDate] = useState(getLocalDate);
   const [isCategoryMenuOpen, setIsCategoryMenuOpen] = useState(false);
   const [isConfirmingSale, setIsConfirmingSale] = useState(false);
   const [paymentSaleId, setPaymentSaleId] = useState<string | null>(null);
@@ -305,6 +344,7 @@ export default function HomePage() {
     changeGiven: number;
     installmentCount?: number;
     installmentAmount?: number;
+    firstInstallmentDate?: string;
   } | null>(null);
   const [toast, setToast] = useState<ToastNotification | null>(null);
 
@@ -421,6 +461,39 @@ export default function HomePage() {
   const totalMonthlySales = useMemo(() => {
     if (!currentClinic) return 0;
     return currentClinic.sales.reduce((total, item) => total + item.total, 0);
+  }, [currentClinic]);
+
+  const paymentSummaries = useMemo(() => {
+    const sales = currentClinic?.sales || [];
+    return (['efectivo', 'transferencia', 'credito'] as const).map((method) => {
+      const methodSales = sales.filter((sale) => sale.paymentMethod === method);
+      return {
+        method,
+        total: methodSales.reduce((sum, sale) => sum + sale.total, 0),
+        count: methodSales.length,
+        balance: method === 'credito'
+          ? methodSales.reduce((sum, sale) => sum + getSaleBalance(sale), 0)
+          : 0,
+      };
+    });
+  }, [currentClinic]);
+
+  const creditInstallmentAlerts = useMemo(() => {
+    if (!currentClinic) return [];
+    const today = getLocalDate();
+    const upcomingLimit = addDaysToDate(today, 7);
+    return currentClinic.sales
+      .filter((sale) => sale.paymentMethod === 'credito' && getSaleBalance(sale) > 0)
+      .flatMap((sale) =>
+        getSaleInstallmentSchedule(sale)
+          .filter((installment) => installment.balance > 0 && installment.dueDate <= upcomingLimit)
+          .map((installment) => ({
+            sale,
+            ...installment,
+            overdue: installment.dueDate < today,
+          })),
+      )
+      .sort((first, second) => first.dueDate.localeCompare(second.dueDate));
   }, [currentClinic]);
 
   const saleSubtotal = useMemo(() => {
@@ -942,9 +1015,16 @@ export default function HomePage() {
     const installmentAmount = Number(saleInstallmentAmount);
     if (
       salePaymentMethod === 'credito' &&
-      (!Number.isInteger(installmentCount) || installmentCount < 1 || !Number.isFinite(installmentAmount) || installmentAmount <= 0)
+      (
+        !Number.isInteger(installmentCount) ||
+        installmentCount < 1 ||
+        !Number.isFinite(installmentAmount) ||
+        installmentAmount <= 0 ||
+        installmentCount * installmentAmount < total ||
+        !saleFirstInstallmentDate
+      )
     ) {
-      showToast('Ingresa un número de cuotas y un valor de cuota válidos', 'error');
+      showToast('Ingresa cuotas que cubran el total y selecciona la fecha de la primera cuota', 'error');
       return;
     }
 
@@ -958,7 +1038,9 @@ export default function HomePage() {
       paymentMethod: salePaymentMethod,
       cashReceived,
       changeGiven,
-      ...(salePaymentMethod === 'credito' ? { installmentCount, installmentAmount } : {}),
+      ...(salePaymentMethod === 'credito'
+        ? { installmentCount, installmentAmount, firstInstallmentDate: saleFirstInstallmentDate }
+        : {}),
     });
   };
 
@@ -977,6 +1059,7 @@ export default function HomePage() {
       changeGiven,
       installmentCount,
       installmentAmount,
+      firstInstallmentDate,
     } = pendingSale;
     const stockConflict = saleItems.find((saleItem) => {
       const product = currentClinic.inventory.find((item) => item.id === saleItem.productId);
@@ -1008,7 +1091,7 @@ export default function HomePage() {
         buyerDocument,
         paymentMethod: method,
         ...(method === 'efectivo' ? { cashReceived, changeGiven } : {}),
-        ...(method === 'credito' ? { installmentCount, installmentAmount } : {}),
+        ...(method === 'credito' ? { installmentCount, installmentAmount, firstInstallmentDate } : {}),
         payments: method === 'credito'
           ? []
           : [{ id: `payment-${saleId}`, amount: total, date: saleDate, method }],
@@ -1037,12 +1120,13 @@ export default function HomePage() {
       if (!(await updateStateAndSync(nextState))) return;
       setPendingSale(null);
       showToast(`¡Venta de ${saleItems.length} producto(s) registrada!`, 'success');
-      setSaleLines([{ productId: '', quantity: '1' }]);
+      setSaleLines([{ productId: '', quantity: '1', productSearch: '' }]);
       setSaleClientName('');
       setSaleBuyerDocument('');
       setSaleCashReceived('');
       setSaleInstallmentCount('');
       setSaleInstallmentAmount('');
+      setSaleFirstInstallmentDate(getLocalDate());
     } finally {
       setIsConfirmingSale(false);
     }
@@ -1190,7 +1274,7 @@ export default function HomePage() {
       return;
     }
 
-    const headers = ['ID Venta', 'Producto', 'Cantidad', 'Cliente', 'Documento', 'Método de pago', 'Total (COP)', 'Pagado (COP)', 'Saldo (COP)', 'Fecha'];
+    const headers = ['ID Venta', 'Producto', 'Cantidad', 'Cliente', 'Documento', 'Método de pago', 'Total (COP)', 'Pagado (COP)', 'Saldo (COP)', 'Fecha', 'Primera cuota', 'Próxima cuota'];
     const rows = currentClinic.sales.map((sale) => [
       sale.id,
       `"${sale.product.replace(/"/g, '""')}"`,
@@ -1202,6 +1286,10 @@ export default function HomePage() {
       getSalePaidAmount(sale),
       getSaleBalance(sale),
       sale.date,
+      sale.firstInstallmentDate || (sale.paymentMethod === 'credito' ? sale.date : ''),
+      sale.paymentMethod === 'credito'
+        ? getSaleInstallmentSchedule(sale).find((installment) => installment.balance > 0)?.dueDate || ''
+        : '',
     ]);
 
     const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -1730,6 +1818,22 @@ export default function HomePage() {
               </div>
             </div>
 
+            <div className="payment-summary-section">
+              <div className="chart-header">
+                <h3>Ventas por forma de pago</h3>
+                <span className="tag-chip neutral">Acumulado</span>
+              </div>
+              <div className="payment-summary-grid">
+                {paymentSummaries.map((summary) => (
+                  <article className={`payment-summary-card payment-${summary.method}`} key={summary.method}>
+                    <span>{summary.method === 'credito' ? 'Crédito' : summary.method === 'efectivo' ? 'Efectivo' : 'Transferencia'}</span>
+                    <strong>{formatCurrency(summary.total)}</strong>
+                    <small>{summary.count} {summary.count === 1 ? 'venta' : 'ventas'}{summary.method === 'credito' ? ` · Pendiente: ${formatCurrency(summary.balance)}` : ''}</small>
+                  </article>
+                ))}
+              </div>
+            </div>
+
             <div className="chart-box">
               <div className="chart-header">
                 <h3>Últimas ventas</h3>
@@ -1771,6 +1875,33 @@ export default function HomePage() {
               ) : expiringSoonItems.length === 0 ? (
                 <p className="muted-text">No hay alertas de stock ni vencimiento. 👍</p>
               ) : null}
+            </div>
+
+            <div className="credit-alert-section">
+              <div className="section-head compact">
+                <h3>Cuotas de crédito</h3>
+                <span className={`tag-chip ${creditInstallmentAlerts.some((alert) => alert.overdue) ? 'danger' : 'neutral'}`}>
+                  {creditInstallmentAlerts.filter((alert) => alert.overdue).length} en mora · {creditInstallmentAlerts.filter((alert) => !alert.overdue).length} en los próximos 7 días
+                </span>
+              </div>
+              {creditInstallmentAlerts.length ? (
+                <div className="credit-alert-list">
+                  {creditInstallmentAlerts.slice(0, 8).map((alert, index) => (
+                    <article
+                      className={`credit-alert-item${alert.overdue ? ' is-overdue' : ''}`}
+                      key={`${alert.sale.id}-${alert.dueDate}-${index}`}
+                    >
+                      <strong>{alert.overdue ? 'En mora' : 'Próxima a vencer'} · {alert.sale.client}</strong>
+                      <span>Cuota: {formatCurrency(alert.balance)} · Vence: {alert.dueDate}</span>
+                    </article>
+                  ))}
+                  {creditInstallmentAlerts.length > 8 ? (
+                    <p className="sale-payment-note">Y {creditInstallmentAlerts.length - 8} cuotas más.</p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="muted-text">No hay cuotas próximas a vencer ni en mora.</p>
+              )}
             </div>
 
             <div className="sales-list-wrap">
@@ -1990,6 +2121,16 @@ export default function HomePage() {
                 📊 Exportar Ventas CSV
               </button>
             </div>
+
+            <div className="payment-summary-grid sales-payment-summary">
+              {paymentSummaries.map((summary) => (
+                <article className={`payment-summary-card payment-${summary.method}`} key={summary.method}>
+                  <span>Ventas en {summary.method === 'credito' ? 'crédito' : summary.method}</span>
+                  <strong>{formatCurrency(summary.total)}</strong>
+                  <small>{summary.count} {summary.count === 1 ? 'venta' : 'ventas'}{summary.method === 'credito' ? ` · Saldo: ${formatCurrency(summary.balance)}` : ''}</small>
+                </article>
+              ))}
+            </div>
             
             {/* Desktop Table View */}
             <div className="table-wrap sales-table">
@@ -2018,6 +2159,11 @@ export default function HomePage() {
                         <td>
                           <strong>{formatCurrency(getSalePaidAmount(sale))}</strong>
                           <br /><small>Saldo: {formatCurrency(getSaleBalance(sale))}</small>
+                          {sale.paymentMethod === 'credito' && getSaleBalance(sale) > 0 ? (
+                            <small className="next-installment-date">
+                              Próxima cuota: {getSaleInstallmentSchedule(sale).find((installment) => installment.balance > 0)?.dueDate || 'Sin fecha'}
+                            </small>
+                          ) : null}
                           {sale.payments?.length ? <div className="sale-payment-history">{sale.payments.map((payment) => <small key={payment.id}>{payment.date}: {formatCurrency(payment.amount)} ({payment.method})</small>)}</div> : null}
                           {sale.paymentMethod === 'credito' && getSaleBalance(sale) > 0 ? (
                             <button type="button" className="tiny-button sale-payment-button" onClick={() => handleOpenPayment(sale)}>Registrar abono</button>
@@ -2063,6 +2209,9 @@ export default function HomePage() {
                       <span>Pagado: <strong>{formatCurrency(getSalePaidAmount(sale))}</strong></span>
                       <span>Saldo: <strong>{formatCurrency(getSaleBalance(sale))}</strong></span>
                       {sale.installmentCount ? <span>Plan: {sale.installmentCount} cuotas de {formatCurrency(sale.installmentAmount || 0)}</span> : null}
+                      {sale.paymentMethod === 'credito' && getSaleBalance(sale) > 0 ? (
+                        <span>Próxima cuota: <strong>{getSaleInstallmentSchedule(sale).find((installment) => installment.balance > 0)?.dueDate || 'Sin fecha'}</strong></span>
+                      ) : null}
                     </div>
                     {sale.payments?.length ? (
                       <div className="sale-payment-history">
@@ -2098,21 +2247,43 @@ export default function HomePage() {
               <div className="sale-lines">
                 <div className="section-head compact">
                   <h3>Productos</h3>
-                  <button type="button" className="secondary-button sale-add-line" onClick={() => setSaleLines((lines) => [...lines, { productId: '', quantity: '1' }])}>
+                  <button type="button" className="secondary-button sale-add-line" onClick={() => setSaleLines((lines) => [...lines, { productId: '', quantity: '1', productSearch: '' }])}>
                     + Agregar producto
                   </button>
                 </div>
-                {saleLines.map((line, index) => (
+                {saleLines.map((line, index) => {
+                  const productSearch = line.productSearch.trim().toLocaleLowerCase();
+                  const matchingProducts = currentClinic?.inventory.filter((item) =>
+                    !productSearch ||
+                    item.name.toLocaleLowerCase().includes(productSearch) ||
+                    item.category.toLocaleLowerCase().includes(productSearch),
+                  ) || [];
+                  return (
                   <div className="sale-line" key={`sale-line-${index}`}>
                     <label>
                       <span>Producto {index + 1} *</span>
+                      <input
+                        type="search"
+                        value={line.productSearch}
+                        placeholder="Buscar por nombre o categoría"
+                        aria-label={`Buscar producto ${index + 1}`}
+                        onChange={(event) => setSaleLines((lines) => lines.map((item, lineIndex) => lineIndex === index
+                          ? { ...item, productSearch: event.target.value, productId: '' }
+                          : item))}
+                      />
                       <select
                         value={line.productId}
-                        onChange={(event) => setSaleLines((lines) => lines.map((item, lineIndex) => lineIndex === index ? { ...item, productId: event.target.value } : item))}
+                        onChange={(event) => {
+                          const productId = event.target.value;
+                          const product = currentClinic?.inventory.find((item) => item.id === productId);
+                          setSaleLines((lines) => lines.map((item, lineIndex) => lineIndex === index
+                            ? { ...item, productId, productSearch: product?.name || item.productSearch }
+                            : item));
+                        }}
                         required
                       >
-                        <option value="">Selecciona un producto</option>
-                        {currentClinic?.inventory.map((item) => (
+                        <option value="">{matchingProducts.length ? 'Selecciona un producto' : 'No hay coincidencias'}</option>
+                        {matchingProducts.map((item) => (
                           <option key={item.id} value={item.id} disabled={item.stock === 0}>
                             {item.name} ({item.stock} en stock) - {formatCurrency(item.price)}
                           </option>
@@ -2146,7 +2317,8 @@ export default function HomePage() {
                       })()}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="sale-summary">
@@ -2231,7 +2403,16 @@ export default function HomePage() {
                       required
                     />
                   </label>
-                  <p className="sale-payment-note">El saldo inicial será {formatCurrency(saleSubtotal)}. Podrás registrar cada abono y consultar el saldo pendiente.</p>
+                  <label>
+                    <span>Fecha de la primera cuota *</span>
+                    <input
+                      type="date"
+                      value={saleFirstInstallmentDate}
+                      onChange={(event) => setSaleFirstInstallmentDate(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <p className="sale-payment-note">Las siguientes cuotas vencerán mensualmente. El valor total de las cuotas debe cubrir la venta ({formatCurrency(saleSubtotal)}); la última se ajustará al saldo restante.</p>
                 </div>
               ) : null}
 
@@ -2320,7 +2501,7 @@ export default function HomePage() {
                 {pendingSale.paymentMethod === 'credito' ? (
                   <div>
                     <span>Plan de crédito</span>
-                    <strong>{pendingSale.installmentCount} cuotas de {formatCurrency(pendingSale.installmentAmount || 0)}</strong>
+                    <strong>{pendingSale.installmentCount} cuotas de {formatCurrency(pendingSale.installmentAmount || 0)} · Primera cuota: {pendingSale.firstInstallmentDate}</strong>
                   </div>
                 ) : null}
                 {pendingSale.paymentMethod === 'credito' ? (
