@@ -116,7 +116,8 @@ function rethrowConfigurationError(error: unknown, fallback: string): never {
     error instanceof Error &&
     (error.message.startsWith('Falta configurar') ||
       error.message.startsWith('Configura INITIAL_ADMIN_') ||
-      error.message.startsWith('INITIAL_ADMIN_PASSWORD'))
+      error.message.startsWith('INITIAL_ADMIN_PASSWORD') ||
+      error.message.startsWith('La variable de conexión'))
   ) {
     throw error;
   }
@@ -146,11 +147,37 @@ function getInitialAppState(): AppState {
 }
 
 function getDatabaseUrl(): string {
-  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-  if (!url) {
+  const configuredUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (!configuredUrl) {
     throw new Error('Falta configurar DATABASE_URL o POSTGRES_URL para conectar AndeStock con Neon.');
   }
+
+  const url = configuredUrl.trim();
+  try {
+    const protocol = new URL(url).protocol;
+    const parsedUrl = new URL(`http:${url.slice(protocol.length)}`);
+    if (
+      !['postgres:', 'postgresql:'].includes(protocol) ||
+      !parsedUrl.username ||
+      !parsedUrl.hostname ||
+      !parsedUrl.pathname ||
+      parsedUrl.pathname === '/'
+    ) {
+      throw new Error('invalid PostgreSQL URL');
+    }
+  } catch {
+    throw new Error('La variable de conexión de Neon no tiene una URL PostgreSQL válida. Cópiala nuevamente desde Neon y guárdala sin comillas ni espacios.');
+  }
   return url;
+}
+
+function logNeonError(operation: 'read' | 'write', error: unknown): void {
+  const errorName = error instanceof Error ? error.name : 'UnknownError';
+  const errorCode =
+    error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      ? error.code
+      : undefined;
+  console.error(`Neon ${operation} error:`, { name: errorName, code: errorCode });
 }
 
 async function getSql() {
@@ -183,7 +210,7 @@ export async function readAppStateFile(): Promise<AppState> {
     }
     return state;
   } catch (error) {
-    console.error('Neon read error:', error);
+    logNeonError('read', error);
     rethrowConfigurationError(error, 'No se pudo leer el estado en Neon. Verifica la conexión y la tabla de AndeStock.');
   }
 }
@@ -204,7 +231,7 @@ export async function writeAppStateFile(data: AppState): Promise<AppState> {
     `;
     return stampedData;
   } catch (error) {
-    console.error('Neon write error:', error);
+    logNeonError('write', error);
     rethrowConfigurationError(error, 'No se pudo guardar el estado en Neon. Los cambios no fueron confirmados.');
   }
 }
