@@ -2253,43 +2253,70 @@ export default function HomePage() {
                 </div>
                 {saleLines.map((line, index) => {
                   const productSearch = line.productSearch.trim().toLocaleLowerCase();
-                  const matchingProducts = currentClinic?.inventory.filter((item) =>
-                    !productSearch ||
-                    item.name.toLocaleLowerCase().includes(productSearch) ||
-                    item.category.toLocaleLowerCase().includes(productSearch),
-                  ) || [];
+                  const matchingProducts = productSearch
+                    ? currentClinic?.inventory.filter((item) =>
+                      item.stock > 0 && item.name.toLocaleLowerCase().includes(productSearch),
+                    ) || []
+                    : [];
+                  const matchingOutOfStockProducts = productSearch
+                    ? currentClinic?.inventory.filter((item) =>
+                      item.stock <= 0 && item.name.toLocaleLowerCase().includes(productSearch),
+                    ) || []
+                    : [];
                   return (
                   <div className="sale-line" key={`sale-line-${index}`}>
-                    <label>
-                      <span>Producto {index + 1} *</span>
-                      <input
-                        type="search"
-                        value={line.productSearch}
-                        placeholder="Buscar por nombre o categoría"
-                        aria-label={`Buscar producto ${index + 1}`}
-                        onChange={(event) => setSaleLines((lines) => lines.map((item, lineIndex) => lineIndex === index
-                          ? { ...item, productSearch: event.target.value, productId: '' }
-                          : item))}
-                      />
-                      <select
-                        value={line.productId}
-                        onChange={(event) => {
-                          const productId = event.target.value;
-                          const product = currentClinic?.inventory.find((item) => item.id === productId);
-                          setSaleLines((lines) => lines.map((item, lineIndex) => lineIndex === index
-                            ? { ...item, productId, productSearch: product?.name || item.productSearch }
-                            : item));
-                        }}
-                        required
-                      >
-                        <option value="">{matchingProducts.length ? 'Selecciona un producto' : 'No hay coincidencias'}</option>
-                        {matchingProducts.map((item) => (
-                          <option key={item.id} value={item.id} disabled={item.stock === 0}>
-                            {item.name} ({item.stock} en stock) - {formatCurrency(item.price)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <div className="sale-product-picker">
+                      <label>
+                        <span>Producto {index + 1} *</span>
+                        <input
+                          type="search"
+                          value={line.productSearch}
+                          placeholder="Escribe el nombre del producto"
+                          aria-label={`Buscar producto ${index + 1}`}
+                          aria-expanded={Boolean(productSearch && !line.productId && matchingProducts.length)}
+                          onChange={(event) => setSaleLines((lines) => lines.map((item, lineIndex) => lineIndex === index
+                            ? { ...item, productSearch: event.target.value, productId: '' }
+                            : item))}
+                          required={!line.productId}
+                        />
+                      </label>
+                      {productSearch && !line.productId ? (
+                        matchingProducts.length ? (
+                          <div className="sale-product-results" aria-label="Productos disponibles">
+                            {matchingProducts.map((item) => (
+                              <button
+                                type="button"
+                                className="sale-product-result"
+                                key={item.id}
+                                onClick={() => setSaleLines((lines) => lines.map((saleLine, lineIndex) => lineIndex === index
+                                  ? { ...saleLine, productId: item.id, productSearch: item.name }
+                                  : saleLine))}
+                              >
+                                <span>{item.name}</span>
+                                <small>{item.stock} en stock · {formatCurrency(item.price)}</small>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="sale-product-empty" role="alert">
+                            {matchingOutOfStockProducts.length
+                              ? `“${matchingOutOfStockProducts[0].name}” no tiene unidades disponibles en stock.`
+                              : 'No hay productos disponibles en stock con ese nombre.'}
+                          </p>
+                        )
+                      ) : null}
+                      {line.productId ? (
+                        <button
+                          type="button"
+                          className="sale-product-change"
+                          onClick={() => setSaleLines((lines) => lines.map((item, lineIndex) => lineIndex === index
+                            ? { ...item, productId: '', productSearch: '' }
+                            : item))}
+                        >
+                          Cambiar producto
+                        </button>
+                      ) : null}
+                    </div>
                     <label>
                       <span>Cantidad *</span>
                       <input
